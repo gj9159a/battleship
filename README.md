@@ -31,6 +31,11 @@ powershell -ExecutionPolicy Bypass -File scripts/windows/run-desktop-dev.ps1
 
 Приложение поднимет frontend dev-сервер и откроет Tauri окно. Backend стартует автоматически из desktop-процесса.
 
+### Запуск двойным кликом (без PowerShell)
+- Запусти файл: `scripts/windows/Start-Battleship.cmd`
+- Если Rust/Cargo установлен, откроется desktop (Tauri) режим.
+- Если Rust/Cargo не установлен, автоматически запустится web-режим (backend + frontend в браузере).
+
 ## Проверка готовности
 
 Backend tests:
