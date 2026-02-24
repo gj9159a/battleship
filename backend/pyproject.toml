@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "battleship-backend"
+version = "0.1.0"
+description = "Battleship backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1.0",
+  "pydantic>=2.10,<3.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9.0"
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+testpaths = ["tests"]
