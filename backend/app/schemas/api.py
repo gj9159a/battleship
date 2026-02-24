@@ -42,14 +42,47 @@ class GameSessionResponse(BaseModel):
     shots: list[ShotResponse]
 
 
+class TrainingParamsDTO(BaseModel):
+    budget_games: int = Field(default=2000, gt=0)
+    microbatch_size: int = Field(default=50, gt=0)
+    eval_window_batches: int = Field(default=2, gt=0)
+    checkpoint_interval_batches: int = Field(default=5, gt=0)
+    target_score: float = Field(default=0.72, ge=0.0, le=1.0)
+    improvement_delta: float = Field(default=0.01, ge=0.0, le=1.0)
+    plateau_delta: float = Field(default=0.003, ge=0.0, le=1.0)
+    plateau_patience_windows: int = Field(default=4, gt=0)
+    early_stop_plateau_windows: int = Field(default=8, gt=0)
+    tick_delay_ms: int = Field(default=0, ge=0)
+
+
 class TrainingJobCreateRequest(BaseModel):
     ruleset_id: str
     profile_id: str | None = None
     seed: int | None = None
+    params: TrainingParamsDTO | None = None
 
 
 class TrainingCommandRequest(BaseModel):
     command: Literal["start", "pause", "resume", "stop"]
+
+
+class TrainingProgressDTO(BaseModel):
+    games_played: int
+    batches_done: int
+    windows_done: int
+    best_score: float
+    last_score: float
+    plateau_windows: int
+
+
+class TrainingCheckpointResponse(BaseModel):
+    checkpoint_id: str
+    job_id: str
+    path: str
+    batches_done: int
+    games_played: int
+    best_score: float
+    stage_state: str | None
 
 
 class TrainingJobResponse(BaseModel):
@@ -69,3 +102,5 @@ class TrainingJobResponse(BaseModel):
     profile_id: str | None
     seed: int | None
     stop_reason: str | None
+    params: TrainingParamsDTO
+    progress: TrainingProgressDTO

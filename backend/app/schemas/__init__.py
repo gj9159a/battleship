@@ -4,8 +4,11 @@ from .api import (
     PlacementDTO,
     ShotResponse,
     ShotRequest,
+    TrainingCheckpointResponse,
     TrainingCommandRequest,
     TrainingJobCreateRequest,
+    TrainingParamsDTO,
+    TrainingProgressDTO,
     TrainingJobResponse,
 )
 
@@ -15,7 +18,10 @@ __all__ = [
     "PlacementDTO",
     "ShotResponse",
     "ShotRequest",
+    "TrainingCheckpointResponse",
     "TrainingCommandRequest",
     "TrainingJobCreateRequest",
+    "TrainingParamsDTO",
+    "TrainingProgressDTO",
     "TrainingJobResponse",
 ]
