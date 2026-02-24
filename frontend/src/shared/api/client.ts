@@ -36,6 +36,59 @@ export function getRulesets(): Promise<RulesetDTO[]> {
   return request<RulesetDTO[]>('/api/v1/rulesets');
 }
 
+export function getRulesetsWithArchived(): Promise<RulesetDTO[]> {
+  return request<RulesetDTO[]>('/api/v1/rulesets?include_archived=true');
+}
+
+export function createRuleset(payload: {
+  id: string;
+  name: string;
+  board_size: number;
+  fleet: number[];
+  placement_no_touch: boolean;
+  extra_turn_on_hit: boolean;
+}): Promise<RulesetDTO> {
+  return request<RulesetDTO>('/api/v1/rulesets', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateRuleset(
+  rulesetId: string,
+  payload: Partial<{
+    name: string;
+    board_size: number;
+    fleet: number[];
+    placement_no_touch: boolean;
+    extra_turn_on_hit: boolean;
+  }>,
+): Promise<RulesetDTO> {
+  return request<RulesetDTO>(`/api/v1/rulesets/${rulesetId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cloneRuleset(rulesetId: string, payload: { new_id: string; new_name: string }): Promise<RulesetDTO> {
+  return request<RulesetDTO>(`/api/v1/rulesets/${rulesetId}/clone`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function archiveRuleset(rulesetId: string): Promise<RulesetDTO> {
+  return request<RulesetDTO>(`/api/v1/rulesets/${rulesetId}/archive`, {
+    method: 'POST',
+  });
+}
+
+export function activateRuleset(rulesetId: string): Promise<RulesetDTO> {
+  return request<RulesetDTO>(`/api/v1/rulesets/${rulesetId}/activate`, {
+    method: 'POST',
+  });
+}
+
 export function getBackendHealth(): Promise<{ status: string; service: string; ts: string }> {
   return request<{ status: string; service: string; ts: string }>('/api/v1/health');
 }

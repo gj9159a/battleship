@@ -3,9 +3,10 @@ import { useState } from 'react';
 import { BackendStatusBar } from './components/BackendStatusBar';
 import { GamePage } from '../pages/game/GamePage';
 import { LeaguePage } from '../pages/league/LeaguePage';
+import { RulesetsPage } from '../pages/rulesets/RulesetsPage';
 import { TrainingPage } from '../pages/training/TrainingPage';
 
-type Screen = 'game' | 'training' | 'league';
+type Screen = 'game' | 'training' | 'league' | 'rulesets';
 
 export function App() {
   const [screen, setScreen] = useState<Screen>('game');
@@ -14,7 +15,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <h1>Battleship</h1>
-        <p>Game / Training / League</p>
+        <p>Game / Training / League / Rulesets</p>
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
@@ -39,6 +40,13 @@ export function App() {
         >
           League
         </button>
+        <button
+          type="button"
+          className={screen === 'rulesets' ? 'nav-btn nav-btn-active' : 'nav-btn'}
+          onClick={() => setScreen('rulesets')}
+        >
+          Rulesets
+        </button>
       </nav>
       <BackendStatusBar />
 
@@ -46,6 +54,7 @@ export function App() {
         {screen === 'game' && <GamePage />}
         {screen === 'training' && <TrainingPage />}
         {screen === 'league' && <LeaguePage />}
+        {screen === 'rulesets' && <RulesetsPage />}
       </main>
     </div>
   );

@@ -14,6 +14,8 @@ export type RulesetDTO = {
   fleet: number[];
   placement_no_touch: boolean;
   extra_turn_on_hit: boolean;
+  is_active?: boolean;
+  is_archived?: boolean;
 };
 
 export type ShotOutcome = 'miss' | 'hit' | 'sunk';

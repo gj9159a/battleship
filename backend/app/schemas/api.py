@@ -3,6 +3,39 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class RulesetResponse(BaseModel):
+    id: str
+    name: str
+    board_size: int
+    fleet: list[int]
+    placement_no_touch: bool
+    extra_turn_on_hit: bool
+    is_active: bool
+    is_archived: bool
+
+
+class RulesetCreateRequest(BaseModel):
+    id: str
+    name: str
+    board_size: int = Field(gt=0)
+    fleet: list[int] = Field(min_length=1)
+    placement_no_touch: bool = False
+    extra_turn_on_hit: bool = True
+
+
+class RulesetCloneRequest(BaseModel):
+    new_id: str
+    new_name: str
+
+
+class RulesetUpdateRequest(BaseModel):
+    name: str | None = None
+    board_size: int | None = Field(default=None, gt=0)
+    fleet: list[int] | None = Field(default=None, min_length=1)
+    placement_no_touch: bool | None = None
+    extra_turn_on_hit: bool | None = None
+
+
 class PlacementDTO(BaseModel):
     row: int = Field(ge=0)
     col: int = Field(ge=0)
