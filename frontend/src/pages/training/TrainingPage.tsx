@@ -39,6 +39,7 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
 const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
 type MetricPoint = {
+  batch: number;
   window: number;
   score: number;
   best: number;
@@ -174,6 +175,7 @@ export function TrainingPage() {
 
       if (event.event_type === 'training.metrics') {
         const point: MetricPoint = {
+          batch: Number(event.payload.batches_done ?? 0),
           window: Number(event.payload.windows_done ?? 0),
           score: Number(event.payload.score ?? 0),
           best: Number(event.payload.best_score ?? 0),
@@ -560,6 +562,7 @@ export function TrainingPage() {
           <table className="data-table" data-testid="training-metrics-table">
             <thead>
                 <tr>
+                  <th>Батч</th>
                   <th>Окно</th>
                   <th>Счёт</th>
                   <th>Лучший</th>
@@ -568,7 +571,8 @@ export function TrainingPage() {
             </thead>
             <tbody>
               {latestMetrics.map((point) => (
-                <tr key={`m-${point.window}-${point.score}`}>
+                <tr key={`m-${point.batch}-${point.window}`}>
+                  <td>{point.batch}</td>
                   <td>{point.window}</td>
                   <td>{point.score.toFixed(4)}</td>
                   <td>{point.best.toFixed(4)}</td>

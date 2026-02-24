@@ -180,20 +180,26 @@ def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient
     job_id = created.json()['id']
 
     seen_types: set[str] = set()
+    metrics_batches: list[int] = []
     with client.websocket_connect('/api/v1/ws') as ws:
         response = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
         assert response.status_code == 200
 
-        for _ in range(8):
+        for _ in range(20):
             event = ws.receive_json()
             if event['entity_id'] == job_id:
                 seen_types.add(event['event_type'])
+                if event['event_type'] == 'training.metrics':
+                    metrics_batches.append(int(event['payload'].get('batches_done', 0)))
             if {'job.lifecycle_changed', 'training.stage_changed', 'training.metrics'}.issubset(seen_types):
-                break
+                if metrics_batches and max(metrics_batches) >= 1:
+                    break
 
     assert 'job.lifecycle_changed' in seen_types
     assert 'training.stage_changed' in seen_types
     assert 'training.metrics' in seen_types
+    assert metrics_batches
+    assert max(metrics_batches) >= 1
 
 
 def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:

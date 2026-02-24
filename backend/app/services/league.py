@@ -1,15 +1,22 @@
 import threading
 import time
+import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import combinations
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import trueskill
 
+from app.bots.selfplay import play_policy_vs
 from app.league import LeagueRating, LeagueSeason, MatchRecord, PoolType, SeasonState
 from app.rulesets import get_ruleset
 from app.services.events import EventBus
+from app.storage import SQLiteStore
+
+if TYPE_CHECKING:
+    from app.services.bot_catalog import BotCatalogService
 
 
 @dataclass(slots=True)
@@ -22,7 +29,13 @@ class _SeasonRuntime:
 
 
 class LeagueService:
-    def __init__(self, event_bus: EventBus) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        store: SQLiteStore | None = None,
+        bot_catalog: "BotCatalogService | None" = None,
+    ) -> None:
         self._event_bus = event_bus
         self._env = trueskill.TrueSkill(draw_probability=0.0)
         self._ratings: dict[str, dict[str, LeagueRating]] = {}
@@ -30,7 +43,79 @@ class LeagueService:
         self._season_runtime: dict[str, _SeasonRuntime] = {}
         self._matches_by_ruleset: dict[str, list[MatchRecord]] = {}
         self._wins: dict[str, dict[tuple[str, str], int]] = {}
+        self._store = store
+        self._bot_catalog = bot_catalog
         self._lock = threading.RLock()
+        self._restore_from_store()
+
+    def _restore_from_store(self) -> None:
+        if self._store is None:
+            return
+
+        with self._lock:
+            for rating in self._store.load_league_ratings():
+                self._ratings.setdefault(rating.ruleset_id, {})[rating.bot_version_id] = rating
+                self._matches_by_ruleset.setdefault(rating.ruleset_id, [])
+                self._wins.setdefault(rating.ruleset_id, {})
+
+            for match in self._store.load_league_matches():
+                self._matches_by_ruleset.setdefault(match.ruleset_id, []).append(match)
+                self._wins.setdefault(match.ruleset_id, {})
+                if match.winner_id is None:
+                    continue
+                loser_id = match.bot_b_id if match.winner_id == match.bot_a_id else match.bot_a_id
+                self._wins[match.ruleset_id][(match.winner_id, loser_id)] = (
+                    self._wins[match.ruleset_id].get((match.winner_id, loser_id), 0) + 1
+                )
+
+            for season_row in self._store.load_league_seasons():
+                state = season_row["lifecycle_state"]
+                if state in {"Running", "Pausing"}:
+                    state = "Paused"
+                elif state == "Stopping":
+                    state = "Stopped"
+
+                season = LeagueSeason(
+                    id=season_row["id"],
+                    ruleset_id=season_row["ruleset_id"],
+                    lifecycle_state=state,
+                    seed=season_row["seed"],
+                    max_matches=season_row["max_matches"],
+                    microbatch_size=season_row["microbatch_size"],
+                    matches_done=season_row["matches_done"],
+                    stop_reason=season_row["stop_reason"],
+                )
+                runtime = _SeasonRuntime(
+                    pair_cursor=season_row["pair_cursor"],
+                    pause_requested=season_row["pause_requested"],
+                    stop_requested=season_row["stop_requested"],
+                )
+                self._seasons[season.id] = season
+                self._season_runtime[season.id] = runtime
+                self._persist_season_locked(season.id)
+
+    def _persist_ratings_locked(self, ruleset_id: str) -> None:
+        if self._store is None:
+            return
+        for rating in self._ratings.get(ruleset_id, {}).values():
+            self._store.upsert_league_rating(rating)
+
+    def _persist_match_locked(self, match: MatchRecord) -> None:
+        if self._store is None:
+            return
+        self._store.insert_league_match(match)
+
+    def _persist_season_locked(self, season_id: str) -> None:
+        if self._store is None:
+            return
+        season = self._seasons[season_id]
+        runtime = self._season_runtime[season_id]
+        self._store.upsert_league_season(
+            season,
+            pair_cursor=runtime.pair_cursor,
+            pause_requested=runtime.pause_requested,
+            stop_requested=runtime.stop_requested,
+        )
 
     def register_bot(self, ruleset_id: str, bot_version_id: str, pool_type: PoolType) -> LeagueRating:
         get_ruleset(ruleset_id)
@@ -53,6 +138,7 @@ class LeagueService:
             self._matches_by_ruleset.setdefault(ruleset_id, [])
             self._wins.setdefault(ruleset_id, {})
             self._rebalance_top16_locked(ruleset_id)
+            self._persist_ratings_locked(ruleset_id)
             return rating
 
     def list_table(self, ruleset_id: str) -> list[LeagueRating]:
@@ -147,6 +233,8 @@ class LeagueService:
             )
             self._matches_by_ruleset.setdefault(ruleset_id, []).append(match)
             self._rebalance_top16_locked(ruleset_id)
+            self._persist_match_locked(match)
+            self._persist_ratings_locked(ruleset_id)
 
             self._event_bus.publish_sync(
                 event_type="league.match_finished",
@@ -209,6 +297,7 @@ class LeagueService:
             )
             self._seasons[season.id] = season
             self._season_runtime[season.id] = _SeasonRuntime(pair_cursor=max(0, seed))
+            self._persist_season_locked(season.id)
             return season
 
     def get_season(self, season_id: str) -> LeagueSeason:
@@ -240,6 +329,7 @@ class LeagueService:
                         name=f"league-{season.id[:8]}",
                     )
                     runtime.thread.start()
+                self._persist_season_locked(season.id)
                 self._event_bus.publish_sync(
                     event_type="league.lifecycle_changed",
                     entity_id=season.id,
@@ -253,6 +343,7 @@ class LeagueService:
                 runtime.pause_requested = True
                 old = season.lifecycle_state
                 season.lifecycle_state = "Pausing"
+                self._persist_season_locked(season.id)
                 self._event_bus.publish_sync(
                     event_type="league.lifecycle_changed",
                     entity_id=season.id,
@@ -267,6 +358,7 @@ class LeagueService:
                 old = season.lifecycle_state
                 season.lifecycle_state = "Running"
                 runtime.run_gate.set()
+                self._persist_season_locked(season.id)
                 self._event_bus.publish_sync(
                     event_type="league.lifecycle_changed",
                     entity_id=season.id,
@@ -281,6 +373,7 @@ class LeagueService:
                 season.stop_reason = "stopped_by_user"
                 old = season.lifecycle_state
                 season.lifecycle_state = "Stopping"
+                self._persist_season_locked(season.id)
                 self._event_bus.publish_sync(
                     event_type="league.lifecycle_changed",
                     entity_id=season.id,
@@ -289,6 +382,7 @@ class LeagueService:
                 )
                 if old == "Paused":
                     season.lifecycle_state = "Stopped"
+                    self._persist_season_locked(season.id)
                     self._event_bus.publish_sync(
                         event_type="league.lifecycle_changed",
                         entity_id=season.id,
@@ -318,6 +412,7 @@ class LeagueService:
                 if runtime.stop_requested and season.lifecycle_state == "Stopping":
                     old = season.lifecycle_state
                     season.lifecycle_state = "Stopped"
+                    self._persist_season_locked(season.id)
                     self._event_bus.publish_sync(
                         event_type="league.lifecycle_changed",
                         entity_id=season.id,
@@ -330,6 +425,7 @@ class LeagueService:
                 if season.lifecycle_state == "Pausing":
                     old = season.lifecycle_state
                     season.lifecycle_state = "Paused"
+                    self._persist_season_locked(season.id)
                     self._event_bus.publish_sync(
                         event_type="league.lifecycle_changed",
                         entity_id=season.id,
@@ -341,8 +437,14 @@ class LeagueService:
 
                 if season.lifecycle_state != "Running":
                     continue
+                microbatch_size = season.microbatch_size
 
-                for _ in range(season.microbatch_size):
+            for _ in range(microbatch_size):
+                with self._lock:
+                    season = self._seasons[season_id]
+                    runtime = self._season_runtime[season_id]
+                    if season.lifecycle_state not in {"Running", "Pausing"}:
+                        break
                     if season.matches_done >= season.max_matches:
                         break
 
@@ -350,10 +452,19 @@ class LeagueService:
                     runtime.pair_cursor += 1
                     if pair is None:
                         season.stop_reason = "insufficient_participants"
+                        self._persist_season_locked(season.id)
                         break
 
                     bot_a_id, bot_b_id = pair
-                    winner_id = bot_a_id if (runtime.pair_cursor % 2 == 0) else bot_b_id
+                    seed = season.seed + runtime.pair_cursor * 1_003 + season.matches_done * 9_973
+
+                try:
+                    winner_id = self._play_match(
+                        ruleset_id=season.ruleset_id,
+                        bot_a_id=bot_a_id,
+                        bot_b_id=bot_b_id,
+                        seed=seed,
+                    )
                     self.record_match(
                         ruleset_id=season.ruleset_id,
                         bot_a_id=bot_a_id,
@@ -361,11 +472,34 @@ class LeagueService:
                         winner_id=winner_id,
                         season_id=season.id,
                     )
-                    season.matches_done += 1
+                except Exception as exc:
+                    with self._lock:
+                        season = self._seasons[season_id]
+                        runtime = self._season_runtime[season_id]
+                        season.stop_reason = f"season_runtime_error: {exc}"
+                        old = season.lifecycle_state
+                        season.lifecycle_state = "Error"
+                        self._persist_season_locked(season.id)
+                        self._event_bus.publish_sync(
+                            event_type="league.lifecycle_changed",
+                            entity_id=season.id,
+                            ruleset_id=season.ruleset_id,
+                            payload={"old_state": old, "new_state": "Error"},
+                        )
+                        runtime.run_gate.clear()
+                    return
 
-                    if runtime.pause_requested or runtime.stop_requested:
+                with self._lock:
+                    season = self._seasons[season_id]
+                    runtime = self._season_runtime[season_id]
+                    season.matches_done += 1
+                    self._persist_season_locked(season.id)
+                    if runtime.stop_requested:
                         break
 
+            with self._lock:
+                season = self._seasons[season_id]
+                runtime = self._season_runtime[season_id]
                 if runtime.stop_requested:
                     continue
 
@@ -377,6 +511,7 @@ class LeagueService:
                         season.stop_reason = "max_matches_reached"
                     old = season.lifecycle_state
                     season.lifecycle_state = "Completed"
+                    self._persist_season_locked(season.id)
                     self._event_bus.publish_sync(
                         event_type="league.lifecycle_changed",
                         entity_id=season.id,
@@ -427,6 +562,47 @@ class LeagueService:
         if not unique:
             return None
         return unique[cursor % len(unique)]
+
+    def _play_match(self, *, ruleset_id: str, bot_a_id: str, bot_b_id: str, seed: int) -> str:
+        if not (self._is_known_bot(bot_a_id) and self._is_known_bot(bot_b_id)):
+            return bot_a_id if seed % 2 == 0 else bot_b_id
+
+        ruleset = get_ruleset(ruleset_id)
+        rng = random.Random(seed)
+        kind_a, weights_a = self._resolve_bot_policy(bot_a_id)
+        kind_b, weights_b = self._resolve_bot_policy(bot_b_id)
+        result = play_policy_vs(
+            ruleset,
+            rng,
+            bot_a_kind=kind_a,
+            bot_a_weights=weights_a,
+            bot_b_kind=kind_b,
+            bot_b_weights=weights_b,
+            first_player=seed % 2,
+        )
+        return bot_a_id if result.winner == 0 else bot_b_id
+
+    def _is_known_bot(self, bot_version_id: str) -> bool:
+        if self._bot_catalog is None:
+            return False
+        try:
+            self._bot_catalog.get_bot(bot_version_id)
+        except KeyError:
+            return False
+        return True
+
+    def _resolve_bot_policy(self, bot_version_id: str) -> tuple[str, dict[str, float] | None]:
+        if self._bot_catalog is None:
+            return "random", None
+
+        try:
+            bot = self._bot_catalog.get_bot(bot_version_id)
+        except KeyError:
+            return "random", None
+
+        if bot.policy_type == "random":
+            return "random", None
+        return "strong", dict(bot.weights)
 
     def _rebalance_top16_locked(self, ruleset_id: str) -> None:
         rows = list(self._ratings.get(ruleset_id, {}).values())

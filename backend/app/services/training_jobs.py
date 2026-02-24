@@ -12,6 +12,7 @@ from app.rulesets import get_ruleset
 from app.services.bot_catalog import BotCatalogService
 from app.services.events import EventBus
 from app.services.league import LeagueService
+from app.storage import SQLiteStore
 from app.trainer import CheckpointStore, TrainingCheckpoint, TrainingParams, TrainingProgress
 from app.trainer.models import LifecycleState, StageState
 
@@ -52,6 +53,7 @@ class TrainingJobService:
         checkpoint_root: Path | None = None,
         bot_catalog: BotCatalogService | None = None,
         league_service: LeagueService | None = None,
+        store: SQLiteStore | None = None,
     ) -> None:
         self._jobs: dict[str, TrainingJob] = {}
         self._event_bus = event_bus
@@ -59,9 +61,116 @@ class TrainingJobService:
         self._runtimes: dict[str, _TrainingRuntime] = {}
         self._bot_catalog = bot_catalog
         self._league_service = league_service
+        self._store = store
         self._lock = threading.RLock()
         root = checkpoint_root or (Path.cwd() / ".data" / "training_checkpoints")
         self._checkpoint_store = CheckpointStore(root)
+        self._restore_from_store()
+
+    def _restore_from_store(self) -> None:
+        if self._store is None:
+            return
+
+        with self._lock:
+            jobs = self._store.load_training_jobs()
+            for row in jobs:
+                progress_payload = row["progress"]
+                progress = TrainingProgress(
+                    games_played=int(progress_payload.get("games_played", 0)),
+                    batches_done=int(progress_payload.get("batches_done", 0)),
+                    windows_done=int(progress_payload.get("windows_done", 0)),
+                    best_score=float(progress_payload.get("best_score", 0.0)),
+                    last_score=float(progress_payload.get("last_score", 0.0)),
+                    plateau_windows=int(progress_payload.get("plateau_windows", 0)),
+                    candidate_streak=int(progress_payload.get("candidate_streak", 0)),
+                    stage_enter_window=int(progress_payload.get("stage_enter_window", 0)),
+                )
+                state = row["lifecycle_state"]
+                if state in {"Running", "Pausing", "Stopping"}:
+                    state = "Paused"
+
+                job = TrainingJob(
+                    id=row["id"],
+                    ruleset_id=row["ruleset_id"],
+                    lifecycle_state=state,
+                    stage_state=row["stage_state"],
+                    profile_id=row["profile_id"],
+                    seed_bot_version_id=row["seed_bot_version_id"],
+                    seed=int(row["seed"]),
+                    params=TrainingParams(**row["params"]),
+                    progress=progress,
+                    current_weights=normalize_weights(row["current_weights"]),
+                    best_weights=normalize_weights(row["best_weights"]),
+                    stop_reason=row["stop_reason"],
+                )
+                self._jobs[job.id] = job
+                self._checkpoints[job.id] = []
+                self._runtimes[job.id] = _TrainingRuntime(
+                    simulator=SelfPlaySimulator(
+                        ruleset_id=job.ruleset_id,
+                        seed=job.seed + job.progress.windows_done,
+                        window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                        population_size=job.params.population_size,
+                        train_split=job.params.train_split,
+                        worker_count=job.params.worker_count,
+                        seed_weights=job.current_weights,
+                    ),
+                    last_auto_promote_window=job.progress.windows_done,
+                )
+                self._persist_job_locked(job)
+
+            for checkpoint in self._store.load_training_checkpoints():
+                if checkpoint.job_id in self._jobs:
+                    self._checkpoints.setdefault(checkpoint.job_id, []).append(checkpoint)
+
+            for checkpoint_list in self._checkpoints.values():
+                checkpoint_list.sort(key=lambda item: item.batches_done)
+
+    def _persist_job_locked(self, job: TrainingJob) -> None:
+        if self._store is None:
+            return
+        self._store.upsert_training_job(
+            {
+                "id": job.id,
+                "ruleset_id": job.ruleset_id,
+                "lifecycle_state": job.lifecycle_state,
+                "stage_state": job.stage_state,
+                "profile_id": job.profile_id,
+                "seed_bot_version_id": job.seed_bot_version_id,
+                "seed": job.seed,
+                "params": {
+                    "microbatch_size": job.params.microbatch_size,
+                    "eval_window_batches": job.params.eval_window_batches,
+                    "checkpoint_interval_batches": job.params.checkpoint_interval_batches,
+                    "population_size": job.params.population_size,
+                    "train_split": job.params.train_split,
+                    "worker_count": job.params.worker_count,
+                    "quality_gate_games": job.params.quality_gate_games,
+                    "quality_gate_min_winrate": job.params.quality_gate_min_winrate,
+                    "quality_gate_min_lower_bound": job.params.quality_gate_min_lower_bound,
+                    "target_score": job.params.target_score,
+                    "improvement_delta": job.params.improvement_delta,
+                    "plateau_delta": job.params.plateau_delta,
+                    "plateau_patience_windows": job.params.plateau_patience_windows,
+                    "early_stop_plateau_windows": job.params.early_stop_plateau_windows,
+                    "min_windows_before_early_stop": job.params.min_windows_before_early_stop,
+                    "tick_delay_ms": job.params.tick_delay_ms,
+                },
+                "progress": {
+                    "games_played": job.progress.games_played,
+                    "batches_done": job.progress.batches_done,
+                    "windows_done": job.progress.windows_done,
+                    "best_score": job.progress.best_score,
+                    "last_score": job.progress.last_score,
+                    "plateau_windows": job.progress.plateau_windows,
+                    "candidate_streak": job.progress.candidate_streak,
+                    "stage_enter_window": job.progress.stage_enter_window,
+                },
+                "current_weights": dict(job.current_weights),
+                "best_weights": dict(job.best_weights),
+                "stop_reason": job.stop_reason,
+            }
+        )
 
     def create_job(
         self,
@@ -103,6 +212,7 @@ class TrainingJobService:
                     seed_weights=normalized_seed_weights,
                 )
             )
+            self._persist_job_locked(job)
         return job
 
     def get_job(self, job_id: str) -> TrainingJob:
@@ -170,6 +280,7 @@ class TrainingJobService:
                 worker_count=job.params.worker_count,
                 seed_weights=job.current_weights,
             )
+            self._persist_job_locked(job)
 
         self._event_bus.publish_sync(
             event_type="training.checkpoint_loaded",
@@ -224,6 +335,7 @@ class TrainingJobService:
                 runtime.pause_requested = True
                 old = job.lifecycle_state
                 job.lifecycle_state = "Pausing"
+                self._persist_job_locked(job)
                 self._event_bus.publish_sync(
                     event_type="job.lifecycle_changed",
                     entity_id=job.id,
@@ -238,6 +350,7 @@ class TrainingJobService:
                 old = job.lifecycle_state
                 job.lifecycle_state = "Running"
                 runtime.run_gate.set()
+                self._persist_job_locked(job)
                 self._event_bus.publish_sync(
                     event_type="job.lifecycle_changed",
                     entity_id=job.id,
@@ -252,6 +365,7 @@ class TrainingJobService:
                 job.stop_reason = "stopped_by_user"
                 old = job.lifecycle_state
                 job.lifecycle_state = "Stopping"
+                self._persist_job_locked(job)
                 self._event_bus.publish_sync(
                     event_type="job.lifecycle_changed",
                     entity_id=job.id,
@@ -371,6 +485,9 @@ class TrainingJobService:
     def _run_microbatch_locked(self, job: TrainingJob, runtime: _TrainingRuntime) -> None:
         job.progress.batches_done += 1
         job.progress.games_played += job.params.microbatch_size
+        wr_baseline: float | None = None
+        wr_active: float | None = None
+        avg_turns_win: float | None = None
 
         if job.progress.batches_done % job.params.eval_window_batches == 0:
             if runtime.simulator is None:
@@ -389,6 +506,9 @@ class TrainingJobService:
             prev_best = job.progress.best_score
             job.progress.windows_done += 1
             job.progress.last_score = metrics.score
+            wr_baseline = metrics.wr_baseline
+            wr_active = metrics.wr_active
+            avg_turns_win = metrics.avg_turns_win
 
             if metrics.score > prev_best:
                 job.progress.best_score = metrics.score
@@ -403,25 +523,28 @@ class TrainingJobService:
             else:
                 job.progress.plateau_windows = 0
 
-            self._event_bus.publish_sync(
-                event_type="training.metrics",
-                entity_id=job.id,
-                ruleset_id=job.ruleset_id,
-                payload={
-                    "windows_done": job.progress.windows_done,
-                    "wr_baseline": metrics.wr_baseline,
-                    "wr_active": metrics.wr_active,
-                    "avg_turns_win": metrics.avg_turns_win,
-                    "score": metrics.score,
-                    "best_score": job.progress.best_score,
-                    "plateau_windows": job.progress.plateau_windows,
-                },
-            )
-
             job.current_weights = runtime.simulator.current_weights
             job.best_weights = runtime.simulator.best_weights
 
             self._apply_stage_transitions_locked(job)
+
+        self._event_bus.publish_sync(
+            event_type="training.metrics",
+            entity_id=job.id,
+            ruleset_id=job.ruleset_id,
+            payload={
+                "batches_done": job.progress.batches_done,
+                "games_played": job.progress.games_played,
+                "windows_done": job.progress.windows_done,
+                "wr_baseline": wr_baseline,
+                "wr_active": wr_active,
+                "avg_turns_win": avg_turns_win,
+                "score": job.progress.last_score,
+                "best_score": job.progress.best_score,
+                "plateau_windows": job.progress.plateau_windows,
+                "window_evaluated": wr_baseline is not None,
+            },
+        )
 
         if job.progress.batches_done % job.params.checkpoint_interval_batches == 0:
             checkpoint = self._checkpoint_store.save(
@@ -434,6 +557,8 @@ class TrainingJobService:
                 best_weights=job.best_weights,
             )
             self._checkpoints[job.id].append(checkpoint)
+            if self._store is not None:
+                self._store.upsert_training_checkpoint(checkpoint)
             self._maybe_auto_promote_checkpoint_locked(job, runtime, checkpoint)
             self._event_bus.publish_sync(
                 event_type="training.checkpoint_created",
@@ -445,6 +570,7 @@ class TrainingJobService:
                     "path": checkpoint.path,
                 },
             )
+        self._persist_job_locked(job)
 
     def _ensure_league_bootstrap_locked(self, job: TrainingJob) -> None:
         if self._bot_catalog is None or self._league_service is None:
@@ -745,6 +871,7 @@ class TrainingJobService:
     def _set_state_locked(self, job: TrainingJob, new_state: LifecycleState, publish_async: bool = True) -> None:
         old_state = job.lifecycle_state
         job.lifecycle_state = new_state
+        self._persist_job_locked(job)
         if publish_async:
             self._event_bus.publish_sync(
                 event_type="job.lifecycle_changed",
@@ -757,6 +884,7 @@ class TrainingJobService:
         old_stage = job.stage_state
         job.stage_state = new_stage
         job.progress.stage_enter_window = job.progress.windows_done
+        self._persist_job_locked(job)
         if publish_async:
             self._event_bus.publish_sync(
                 event_type="training.stage_changed",

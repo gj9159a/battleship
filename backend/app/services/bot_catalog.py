@@ -4,13 +4,18 @@ from dataclasses import replace
 from app.bots import BotVersion
 from app.bots.policy import normalize_weights
 from app.rulesets import get_ruleset
+from app.storage import SQLiteStore
 from app.trainer import TrainingCheckpoint
 
 
 class BotCatalogService:
-    def __init__(self) -> None:
+    def __init__(self, store: SQLiteStore | None = None) -> None:
         self._bots: dict[str, BotVersion] = {}
         self._lock = threading.RLock()
+        self._store = store
+        if self._store is not None:
+            for bot in self._store.load_bot_versions():
+                self._bots[bot.bot_version_id] = bot
 
     def list_bots(
         self,
@@ -78,6 +83,8 @@ class BotCatalogService:
                 tags=set(tags or set()),
             )
             self._bots[bot_version_id] = created
+            if self._store is not None:
+                self._store.upsert_bot_version(created)
             return created
 
     def create_from_checkpoint(
@@ -109,6 +116,8 @@ class BotCatalogService:
                 tags=set(),
             )
             self._bots[created.bot_version_id] = created
+            if self._store is not None:
+                self._store.upsert_bot_version(created)
             return created
 
     def update_labels(
@@ -143,4 +152,6 @@ class BotCatalogService:
 
             updated = replace(current, tags=tags)
             self._bots[bot_version_id] = updated
+            if self._store is not None:
+                self._store.upsert_bot_version(updated)
             return updated

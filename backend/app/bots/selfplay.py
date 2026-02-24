@@ -78,6 +78,27 @@ def play_strong_vs(
     opponent_weights: dict[str, float] | None,
     first_player: int,
 ) -> MatchResult:
+    return play_policy_vs(
+        ruleset,
+        rng,
+        bot_a_kind="strong",
+        bot_a_weights=strong_weights,
+        bot_b_kind=opponent_kind,
+        bot_b_weights=opponent_weights,
+        first_player=first_player,
+    )
+
+
+def play_policy_vs(
+    ruleset: Ruleset,
+    rng: random.Random,
+    *,
+    bot_a_kind: str,
+    bot_a_weights: dict[str, float] | None,
+    bot_b_kind: str,
+    bot_b_weights: dict[str, float] | None,
+    first_player: int,
+) -> MatchResult:
     placements_0 = generate_random_placements(ruleset, rng)
     placements_1 = generate_random_placements(ruleset, rng)
 
@@ -85,26 +106,22 @@ def play_strong_vs(
     board_p1 = build_board_from_placements(ruleset, placements_1)
     game = BattleshipGame(ruleset=ruleset, board_p0=board_p0, board_p1=board_p1, first_player=first_player)
 
-    strong_player = StrongBotPolicy(
-        ruleset,
-        rng=random.Random(rng.random()),
-        weights=strong_weights,
-        config=StrongBotConfig(lookahead_mode="adaptive", lookahead_policy_version="adaptive_v1"),
-    )
+    def build_player(kind: str, weights: dict[str, float] | None):
+        if kind == "random":
+            return RandomBotPolicy(ruleset, rng=random.Random(rng.random()))
+        if kind == "strong":
+            return StrongBotPolicy(
+                ruleset,
+                rng=random.Random(rng.random()),
+                weights=weights,
+                config=StrongBotConfig(lookahead_mode="adaptive", lookahead_policy_version="adaptive_v1"),
+            )
+        raise ValueError(f"Unknown bot kind={kind}")
 
-    if opponent_kind == "random":
-        opponent = RandomBotPolicy(ruleset, rng=random.Random(rng.random()))
-    elif opponent_kind == "strong":
-        opponent = StrongBotPolicy(
-            ruleset,
-            rng=random.Random(rng.random()),
-            weights=opponent_weights,
-            config=StrongBotConfig(lookahead_mode="adaptive", lookahead_policy_version="adaptive_v1"),
-        )
-    else:
-        raise ValueError(f"Unknown opponent_kind={opponent_kind}")
+    player_a = build_player(bot_a_kind, bot_a_weights)
+    player_b = build_player(bot_b_kind, bot_b_weights)
 
-    players = [strong_player, opponent]
+    players = [player_a, player_b]
     shots_total = 0
 
     while not game.is_over:
