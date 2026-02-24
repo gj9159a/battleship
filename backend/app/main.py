@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.api import api_router
-from app.services import EventBus, GameSessionService, TrainingJobService
+from app.services import EventBus, GameSessionService, LeagueService, TrainingJobService
 
 
 def create_app() -> FastAPI:
@@ -11,6 +11,7 @@ def create_app() -> FastAPI:
     app.state.event_bus = event_bus
     app.state.game_sessions = GameSessionService()
     app.state.training_jobs = TrainingJobService(event_bus=event_bus)
+    app.state.league_service = LeagueService(event_bus=event_bus)
 
     app.include_router(api_router)
     return app

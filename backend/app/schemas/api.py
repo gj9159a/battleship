@@ -104,3 +104,78 @@ class TrainingJobResponse(BaseModel):
     stop_reason: str | None
     params: TrainingParamsDTO
     progress: TrainingProgressDTO
+
+
+class LeagueRegisterBotRequest(BaseModel):
+    bot_version_id: str
+    pool_type: Literal["baseline", "active", "league"] = "active"
+
+
+class LeagueRatingResponse(BaseModel):
+    ruleset_id: str
+    bot_version_id: str
+    pool_type: Literal["baseline", "active", "league"]
+    mu: float
+    sigma: float
+    conservative_score: float
+    matches_played: int
+    wins: int
+    losses: int
+    draws: int
+    winrate: float
+    updated_at: str
+
+
+class LeagueMatchRecordRequest(BaseModel):
+    bot_a_id: str
+    bot_b_id: str
+    winner_id: str | None
+
+
+class LeagueMatchResponse(BaseModel):
+    id: str
+    ruleset_id: str
+    season_id: str | None
+    bot_a_id: str
+    bot_b_id: str
+    winner_id: str | None
+    played_at: str
+
+
+class LeagueMatrixCellResponse(BaseModel):
+    bot_a_id: str
+    bot_b_id: str
+    wins_a: int
+    wins_b: int
+    total: int
+
+
+class LeagueSeasonCreateRequest(BaseModel):
+    ruleset_id: str
+    seed: int = 0
+    max_matches: int = Field(default=200, gt=0)
+    microbatch_size: int = Field(default=20, gt=0)
+
+
+class LeagueJobCommandRequest(BaseModel):
+    command: Literal["start", "pause", "resume", "stop"]
+
+
+class LeagueSeasonResponse(BaseModel):
+    id: str
+    ruleset_id: str
+    lifecycle_state: Literal[
+        "Idle",
+        "Running",
+        "Pausing",
+        "Paused",
+        "Stopping",
+        "Stopped",
+        "Completed",
+        "Error",
+    ]
+    seed: int
+    max_matches: int
+    microbatch_size: int
+    matches_done: int
+    stop_reason: str | None

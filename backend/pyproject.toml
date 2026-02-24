@@ -9,7 +9,8 @@ description = "Battleship backend"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1.0",
-  "pydantic>=2.10,<3.0"
+  "pydantic>=2.10,<3.0",
+  "trueskill>=0.4.5,<0.5.0"
 ]
 
 [project.optional-dependencies]
