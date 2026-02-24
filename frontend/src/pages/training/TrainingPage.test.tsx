@@ -66,6 +66,7 @@ const JOB_RUNNING = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -112,5 +113,38 @@ describe('TrainingPage', () => {
       expect(screen.getByTestId('training-job-id')).toHaveTextContent('job-1');
       expect(screen.getByTestId('training-job-id')).toHaveTextContent('Running');
     });
+  });
+
+  it('retries rulesets loading after transient failure', async () => {
+    vi.stubGlobal('WebSocket', undefined as unknown as typeof WebSocket);
+
+    let rulesetCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+
+      if (url.endsWith('/api/v1/rulesets') && method === 'GET') {
+        rulesetCalls += 1;
+        if (rulesetCalls === 1) {
+          throw new Error('Failed to fetch');
+        }
+        return new Response(JSON.stringify(RULESETS), { status: 200 });
+      }
+
+      throw new Error(`Unhandled request: ${url} ${method}`);
+    });
+
+    render(<TrainingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Не удалось загрузить профили правил. Повторяем...')).toBeInTheDocument();
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Готово к запуску тренировки.')).toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
   });
 });

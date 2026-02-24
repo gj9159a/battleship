@@ -17,6 +17,7 @@ import type {
   TrainingParamsDTO,
 } from '../../shared/api/types';
 
+const RULESETS_RETRY_DELAY_MS = 1000;
 const DEFAULT_PARAMS: TrainingParamsDTO = {
   microbatch_size: 100,
   eval_window_batches: 2,
@@ -75,29 +76,46 @@ export function TrainingPage() {
   }, []);
 
   useEffect(() => {
-    let mounted = true;
-    getRulesets()
-      .then((items) => {
-        if (!mounted) {
+    let cancelled = false;
+    let retryTimerId: number | null = null;
+
+    const loadRulesets = async () => {
+      try {
+        const items = await getRulesets();
+        if (cancelled) {
           return;
         }
         setRulesets(items);
-        if (items.length > 0 && !items.some((item) => item.id === selectedRulesetId)) {
-          setSelectedRulesetId(items[0].id);
+        setErrorText(null);
+        setSelectedRulesetId((prev) => {
+          if (items.length === 0) {
+            return prev;
+          }
+          return items.some((item) => item.id === prev) ? prev : items[0].id;
+        });
+        setStatusText(items.length > 0 ? 'Готово к запуску тренировки.' : 'Нет доступных профилей правил.');
+      } catch (error) {
+        if (cancelled) {
+          return;
         }
-        setStatusText('Готово к запуску тренировки.');
-      })
-      .catch((error: Error) => {
-        if (mounted) {
-          setErrorText(error.message);
-          setStatusText('Не удалось загрузить профили правил.');
-        }
-      });
+        setErrorText((error as Error).message);
+        setStatusText('Не удалось загрузить профили правил. Повторяем...');
+        retryTimerId = window.setTimeout(() => {
+          retryTimerId = null;
+          void loadRulesets();
+        }, RULESETS_RETRY_DELAY_MS);
+      }
+    };
+
+    void loadRulesets();
 
     return () => {
-      mounted = false;
+      cancelled = true;
+      if (retryTimerId !== null) {
+        window.clearTimeout(retryTimerId);
+      }
     };
-  }, [selectedRulesetId]);
+  }, []);
 
   async function refreshJob(jobId: string): Promise<TrainingJobDTO> {
     const fresh = await getTrainingJob(jobId);
