@@ -150,21 +150,40 @@ def _evaluate_candidate_window(payload: _EvalRequest) -> WindowMetrics:
     baseline_wins = 0
     active_wins = 0
     won_turns: list[int] = []
+    random_baseline_wins = 0
+    strong_baseline_wins = 0
 
-    for idx in range(payload.baseline_games):
+    random_baseline_games = max(1, payload.baseline_games // 2)
+    strong_baseline_games = max(1, payload.baseline_games - random_baseline_games)
+
+    for idx in range(random_baseline_games):
         first_player = idx % 2
-        opponent_kind = "random" if idx % 2 == 0 else "strong"
-        baseline_weights = None if opponent_kind == "random" else normalize_weights(None)
         result = play_strong_vs(
             ruleset,
             rng,
             strong_weights=strong_weights,
-            opponent_kind=opponent_kind,
-            opponent_weights=baseline_weights,
+            opponent_kind="random",
+            opponent_weights=None,
             first_player=first_player,
         )
         if result.winner == 0:
             baseline_wins += 1
+            random_baseline_wins += 1
+            won_turns.append(result.shots_total)
+
+    for idx in range(strong_baseline_games):
+        first_player = idx % 2
+        result = play_strong_vs(
+            ruleset,
+            rng,
+            strong_weights=strong_weights,
+            opponent_kind="strong",
+            opponent_weights=normalize_weights(None),
+            first_player=first_player,
+        )
+        if result.winner == 0:
+            baseline_wins += 1
+            strong_baseline_wins += 1
             won_turns.append(result.shots_total)
 
     for idx in range(payload.active_games):
@@ -185,16 +204,38 @@ def _evaluate_candidate_window(payload: _EvalRequest) -> WindowMetrics:
             active_wins += 1
             won_turns.append(result.shots_total)
 
-    wr_baseline = baseline_wins / payload.baseline_games
+    wr_baseline = baseline_wins / max(1, payload.baseline_games)
     wr_active = active_wins / payload.active_games
     avg_turns_win = float(sum(won_turns) / len(won_turns)) if won_turns else ruleset.board_size * 7.0
-    score = compute_score(wr_baseline, wr_active, avg_turns_win)
+
+    lcb_random = _wilson_lower_bound(wins=random_baseline_wins, total=random_baseline_games)
+    lcb_strong = _wilson_lower_bound(wins=strong_baseline_wins, total=strong_baseline_games)
+    lcb_active = _wilson_lower_bound(wins=active_wins, total=payload.active_games)
+    score = compute_score(
+        wr_baseline=wr_baseline,
+        wr_active=wr_active,
+        avg_turns_win=avg_turns_win,
+        lcb_random=lcb_random,
+        lcb_strong=lcb_strong,
+        lcb_active=lcb_active,
+    )
     return WindowMetrics(
         wr_baseline=round(wr_baseline, 6),
         wr_active=round(wr_active, 6),
         avg_turns_win=round(avg_turns_win, 6),
         score=round(score, 6),
     )
+
+
+def _wilson_lower_bound(*, wins: int, total: int, z: float = 1.96) -> float:
+    if total <= 0:
+        return 0.0
+    p = wins / total
+    z2 = z * z
+    denom = 1 + z2 / total
+    center = p + z2 / (2 * total)
+    margin = z * math.sqrt((p * (1 - p) + z2 / (4 * total)) / total)
+    return max(0.0, (center - margin) / denom)
 
 
 class SelfPlaySimulator:

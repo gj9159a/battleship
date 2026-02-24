@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.trainer import CheckpointStore, DeterministicSimulator
+from app.trainer.simulation import compute_score
 
 
 def test_simulator_is_deterministic_for_same_seed() -> None:
@@ -11,6 +12,18 @@ def test_simulator_is_deterministic_for_same_seed() -> None:
     seq2 = [s2.next_window(i).score for i in range(5)]
 
     assert seq1 == seq2
+
+
+def test_compute_score_uses_min_lcb_when_provided() -> None:
+    score = compute_score(
+        wr_baseline=0.9,
+        wr_active=0.8,
+        avg_turns_win=30.0,
+        lcb_random=0.61,
+        lcb_strong=0.57,
+        lcb_active=0.63,
+    )
+    assert score == 0.57
 
 
 def test_checkpoint_store_save_and_load(tmp_path: Path) -> None:

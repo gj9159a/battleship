@@ -11,9 +11,19 @@ class WindowMetrics:
     score: float
 
 
-def compute_score(wr_baseline: float, wr_active: float, avg_turns_win: float) -> float:
-    turn_efficiency = max(0.0, min(1.0, 1 - (avg_turns_win - 20.0) / 60.0))
-    return 0.6 * wr_baseline + 0.3 * wr_active + 0.1 * turn_efficiency
+def compute_score(
+    wr_baseline: float,
+    wr_active: float,
+    avg_turns_win: float,
+    *,
+    lcb_random: float | None = None,
+    lcb_strong: float | None = None,
+    lcb_active: float | None = None,
+) -> float:
+    del avg_turns_win
+    if lcb_random is not None and lcb_strong is not None and lcb_active is not None:
+        return min(lcb_random, lcb_strong, lcb_active)
+    return min(wr_baseline, wr_active)
 
 
 class DeterministicSimulator:
