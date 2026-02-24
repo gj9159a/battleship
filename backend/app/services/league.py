@@ -26,6 +26,7 @@ class _SeasonRuntime:
     pause_requested: bool = False
     stop_requested: bool = False
     pair_cursor: int = 0
+    in_microbatch: bool = False
 
 
 class LeagueService:
@@ -342,7 +343,11 @@ class LeagueService:
                 self._ensure_state(season, {"Running"}, command)
                 runtime.pause_requested = True
                 old = season.lifecycle_state
-                season.lifecycle_state = "Pausing"
+                if runtime.in_microbatch:
+                    season.lifecycle_state = "Pausing"
+                else:
+                    season.lifecycle_state = "Paused"
+                    runtime.run_gate.clear()
                 self._persist_season_locked(season.id)
                 self._event_bus.publish_sync(
                     event_type="league.lifecycle_changed",
@@ -438,6 +443,7 @@ class LeagueService:
                 if season.lifecycle_state != "Running":
                     continue
                 microbatch_size = season.microbatch_size
+                runtime.in_microbatch = True
 
             for _ in range(microbatch_size):
                 with self._lock:
@@ -480,6 +486,7 @@ class LeagueService:
                     with self._lock:
                         season = self._seasons[season_id]
                         runtime = self._season_runtime[season_id]
+                        runtime.in_microbatch = False
                         season.stop_reason = f"season_runtime_error: {exc}"
                         old = season.lifecycle_state
                         season.lifecycle_state = "Error"
@@ -504,6 +511,7 @@ class LeagueService:
             with self._lock:
                 season = self._seasons[season_id]
                 runtime = self._season_runtime[season_id]
+                runtime.in_microbatch = False
                 if runtime.stop_requested:
                     continue
 

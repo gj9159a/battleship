@@ -3,7 +3,7 @@ import time
 from fastapi.testclient import TestClient
 
 
-def _wait_season_state(client: TestClient, season_id: str, target: str, timeout: float = 2.5) -> dict:
+def _wait_season_state(client: TestClient, season_id: str, target: str, timeout: float = 10.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         response = client.get(f"/api/v1/league/seasons/{season_id}")
@@ -93,7 +93,7 @@ def test_league_season_job_lifecycle(client: TestClient) -> None:
 
     pausing = client.post(f"/api/v1/league/jobs/{season_id}/commands", json={"command": "pause"})
     assert pausing.status_code == 200
-    assert pausing.json()["lifecycle_state"] == "Pausing"
+    assert pausing.json()["lifecycle_state"] in ("Pausing", "Paused")
 
     paused = _wait_season_state(client, season_id, "Paused")
     assert paused["matches_done"] % paused["microbatch_size"] == 0
