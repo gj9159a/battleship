@@ -35,6 +35,10 @@ powershell -ExecutionPolicy Bypass -File scripts/windows/run-desktop-dev.ps1
 - Запусти файл: `scripts/windows/Start-Battleship.cmd`
 - Если Rust/Cargo установлен, откроется desktop (Tauri) режим.
 - Если Rust/Cargo не установлен, автоматически запустится web-режим (backend + frontend в браузере).
+- Лог запуска сохраняется в `logs/startup/start_YYYYMMDD_HHMMSS.log`.
+- В fallback web-режиме отдельные логи:
+  - `logs/startup/backend_YYYYMMDD_HHMMSS.log`
+  - `logs/startup/frontend_YYYYMMDD_HHMMSS.log`
 
 ## Проверка готовности
 
