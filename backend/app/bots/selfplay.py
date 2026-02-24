@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import math
 import multiprocessing as mp
 import random
 from dataclasses import dataclass
@@ -197,6 +198,8 @@ def _evaluate_candidate_window(payload: _EvalRequest) -> WindowMetrics:
 
 
 class SelfPlaySimulator:
+    _ELITE_FRACTION = 0.25
+
     def __init__(
         self,
         *,
@@ -281,24 +284,35 @@ class SelfPlaySimulator:
             phase_tag=0,
         )
 
-        best_index = max(range(len(candidates)), key=lambda idx: train_metrics[idx].score)
-        best_candidate = candidates[best_index]
-        best_train = train_metrics[best_index]
-
-        if best_train.score >= self._incumbent_score:
-            self._incumbent_weights = dict(best_candidate)
-            self._incumbent_score = best_train.score
-
-        eval_metrics = self._evaluate_one(
-            windows_done=windows_done,
-            candidate_index=0,
-            candidate_weights=self._incumbent_weights,
-            reference_weights=reference,
-            league_opponents=normalized_league,
-            baseline_games=eval_baseline,
-            active_games=eval_active,
-            phase_tag=1,
+        elite_count = max(1, math.ceil(len(candidates) * self._ELITE_FRACTION))
+        ranked = sorted(
+            range(len(candidates)),
+            key=lambda idx: (train_metrics[idx].score, -idx),
+            reverse=True,
         )
+        elite_indices = ranked[:elite_count]
+
+        elite_eval: dict[int, WindowMetrics] = {}
+        for candidate_index in elite_indices:
+            elite_eval[candidate_index] = self._evaluate_one(
+                windows_done=windows_done,
+                candidate_index=candidate_index,
+                candidate_weights=candidates[candidate_index],
+                reference_weights=reference,
+                league_opponents=normalized_league,
+                baseline_games=eval_baseline,
+                active_games=eval_active,
+                phase_tag=1,
+            )
+
+        best_eval_index = max(
+            elite_indices,
+            key=lambda idx: (elite_eval[idx].score, train_metrics[idx].score, -idx),
+        )
+        eval_metrics = elite_eval[best_eval_index]
+        if eval_metrics.score >= self._incumbent_score:
+            self._incumbent_weights = dict(candidates[best_eval_index])
+            self._incumbent_score = eval_metrics.score
 
         if eval_metrics.score >= self._best_score:
             self._best_weights = dict(self._incumbent_weights)

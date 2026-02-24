@@ -3,6 +3,7 @@ import random
 from app.bots.policy import StrongBotPolicy
 from app.bots.selfplay import SelfPlaySimulator
 from app.rulesets.catalog import CLASSIC_V1
+from app.trainer.simulation import WindowMetrics
 
 
 def test_strong_bot_policy_never_repeats_shot() -> None:
@@ -57,3 +58,41 @@ def test_self_play_simulator_is_deterministic() -> None:
 
     assert seq1 == seq2
     assert s1.best_weights == s2.best_weights
+
+
+def test_self_play_simulator_evaluates_top_quarter_candidates(monkeypatch) -> None:
+    simulator = SelfPlaySimulator(
+        ruleset_id="classic_v1",
+        seed=77,
+        window_games=8,
+        population_size=32,
+        train_split=0.6,
+        worker_count=1,
+    )
+
+    def fake_population(self, **kwargs):
+        candidates = kwargs["candidates"]
+        return [
+            WindowMetrics(wr_baseline=0.5, wr_active=0.5, avg_turns_win=40.0, score=float(index))
+            for index, _ in enumerate(candidates)
+        ]
+
+    eval_indices: list[int] = []
+
+    def fake_evaluate_one(self, **kwargs):
+        candidate_index = int(kwargs["candidate_index"])
+        eval_indices.append(candidate_index)
+        return WindowMetrics(
+            wr_baseline=0.6,
+            wr_active=0.6,
+            avg_turns_win=30.0,
+            score=float(candidate_index),
+        )
+
+    monkeypatch.setattr(SelfPlaySimulator, "_evaluate_population", fake_population)
+    monkeypatch.setattr(SelfPlaySimulator, "_evaluate_one", fake_evaluate_one)
+
+    simulator.next_window(0)
+
+    assert len(eval_indices) == 8
+    assert sorted(eval_indices) == list(range(24, 32))
