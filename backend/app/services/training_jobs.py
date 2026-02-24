@@ -229,6 +229,31 @@ class TrainingJobService:
                 if job.lifecycle_state != "Running":
                     continue
 
+                tick_delay_ms = job.params.tick_delay_ms
+
+            # Keep sleep outside the critical section so command handlers
+            # can acquire the lock and apply pause/stop promptly.
+            if tick_delay_ms:
+                time.sleep(tick_delay_ms / 1000)
+
+            with self._lock:
+                job = self._jobs[job_id]
+                runtime = self._runtimes[job_id]
+
+                if runtime.stop_requested and job.lifecycle_state == "Stopping":
+                    self._set_stage_locked(job, "Finished", reason=job.stop_reason or "stopped")
+                    self._set_state_locked(job, "Stopped")
+                    runtime.run_gate.clear()
+                    return
+
+                if job.lifecycle_state == "Pausing":
+                    runtime.run_gate.clear()
+                    self._set_state_locked(job, "Paused")
+                    continue
+
+                if job.lifecycle_state != "Running":
+                    continue
+
                 self._run_microbatch_locked(job)
 
                 if runtime.stop_requested:
@@ -248,10 +273,9 @@ class TrainingJobService:
                     runtime.run_gate.clear()
                     return
 
-    def _run_microbatch_locked(self, job: TrainingJob) -> None:
-        if job.params.tick_delay_ms:
-            time.sleep(job.params.tick_delay_ms / 1000)
+            time.sleep(0.0005)
 
+    def _run_microbatch_locked(self, job: TrainingJob) -> None:
         job.progress.batches_done += 1
         job.progress.games_played += job.params.microbatch_size
 

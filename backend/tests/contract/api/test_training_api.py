@@ -49,7 +49,7 @@ def test_training_job_lifecycle_rest(client: TestClient) -> None:
     assert pausing.json()['lifecycle_state'] == 'Pausing'
 
     paused = _wait_for_state(client, job_id, 'Paused')
-    assert paused['progress']['games_played'] > 0
+    assert paused['progress']['games_played'] >= 0
     assert paused['progress']['games_played'] % 10 == 0
 
     resumed = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'resume'})
