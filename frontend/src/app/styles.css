@@ -1,0 +1,162 @@
+:root {
+  --bg: #f4f6f0;
+  --surface: #fefefe;
+  --text: #13222d;
+  --muted: #5f6e77;
+  --line: #ccd7cf;
+  --primary: #1d5f4a;
+  --primary-strong: #0e3c30;
+  --miss: #aeb9bf;
+  --hit: #df5b3e;
+  --sunk: #922f21;
+  --ship: #3f7d61;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 10%, #dcebdd 0, transparent 35%),
+    radial-gradient(circle at 85% 80%, #dde8f3 0, transparent 32%),
+    var(--bg);
+}
+
+.app-shell {
+  width: min(1160px, 94vw);
+  margin: 0 auto;
+  padding: 24px 0 32px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 34px;
+  letter-spacing: 0.02em;
+}
+
+.app-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.game-layout {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.controls {
+  display: grid;
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+select,
+button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+}
+
+button {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #9cad9a;
+  border-color: #9cad9a;
+  cursor: not-allowed;
+}
+
+.status {
+  font-weight: 600;
+}
+
+.boards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  background: #fbfdff;
+  border-radius: 3px;
+}
+
+.cell.ship {
+  background: color-mix(in srgb, var(--ship) 35%, white);
+}
+
+.cell.miss {
+  background: color-mix(in srgb, var(--miss) 45%, white);
+}
+
+.cell.hit {
+  background: color-mix(in srgb, var(--hit) 55%, white);
+}
+
+.cell.sunk {
+  background: color-mix(in srgb, var(--sunk) 75%, white);
+}
+
+.cell.targetable {
+  cursor: pointer;
+}
+
+.cell.targetable:hover {
+  border-color: var(--primary-strong);
+}
+
+.event-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.event-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid #ecf1ec;
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .game-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .boards {
+    grid-template-columns: 1fr;
+  }
+}
