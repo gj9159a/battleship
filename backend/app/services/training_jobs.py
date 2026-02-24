@@ -2,12 +2,15 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+import random
 from uuid import uuid4
 
 from app.bots.policy import normalize_weights
-from app.bots.selfplay import SelfPlaySimulator
+from app.bots.selfplay import SelfPlaySimulator, play_strong_vs
 from app.rulesets import get_ruleset
+from app.services.bot_catalog import BotCatalogService
 from app.services.events import EventBus
+from app.services.league import LeagueService
 from app.trainer import CheckpointStore, TrainingCheckpoint, TrainingParams, TrainingProgress
 from app.trainer.models import LifecycleState, StageState
 
@@ -35,14 +38,26 @@ class _TrainingRuntime:
     pause_requested: bool = False
     stop_requested: bool = False
     simulator: SelfPlaySimulator | None = None
+    last_auto_promote_window: int = 0
 
 
 class TrainingJobService:
-    def __init__(self, event_bus: EventBus, checkpoint_root: Path | None = None) -> None:
+    _TOP_K_OPPONENTS = 16
+    _PROMOTE_EVERY_WINDOWS = 4
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        checkpoint_root: Path | None = None,
+        bot_catalog: BotCatalogService | None = None,
+        league_service: LeagueService | None = None,
+    ) -> None:
         self._jobs: dict[str, TrainingJob] = {}
         self._event_bus = event_bus
         self._checkpoints: dict[str, list[TrainingCheckpoint]] = {}
         self._runtimes: dict[str, _TrainingRuntime] = {}
+        self._bot_catalog = bot_catalog
+        self._league_service = league_service
         self._lock = threading.RLock()
         root = checkpoint_root or (Path.cwd() / ".data" / "training_checkpoints")
         self._checkpoint_store = CheckpointStore(root)
@@ -167,6 +182,7 @@ class TrainingJobService:
                 old_stage = job.stage_state
                 if job.stage_state is None:
                     self._set_stage_locked(job, "Warmup", reason="job_started", publish_async=False)
+                self._ensure_league_bootstrap_locked(job)
                 self._set_state_locked(job, "Running", publish_async=False)
                 runtime.pause_requested = False
                 runtime.stop_requested = False
@@ -299,7 +315,14 @@ class TrainingJobService:
                 if job.lifecycle_state != "Running":
                     continue
 
-                self._run_microbatch_locked(job)
+                try:
+                    self._run_microbatch_locked(job, runtime)
+                except Exception as exc:
+                    job.stop_reason = f"runtime_error: {exc}"
+                    self._set_stage_locked(job, "Finished", reason="runtime_error")
+                    self._set_state_locked(job, "Error")
+                    runtime.run_gate.clear()
+                    return
 
                 if runtime.stop_requested:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason or "stopped")
@@ -320,12 +343,11 @@ class TrainingJobService:
 
             time.sleep(0.0005)
 
-    def _run_microbatch_locked(self, job: TrainingJob) -> None:
+    def _run_microbatch_locked(self, job: TrainingJob, runtime: _TrainingRuntime) -> None:
         job.progress.batches_done += 1
         job.progress.games_played += job.params.microbatch_size
 
         if job.progress.batches_done % job.params.eval_window_batches == 0:
-            runtime = self._runtimes[job.id]
             if runtime.simulator is None:
                 runtime.simulator = SelfPlaySimulator(
                     ruleset_id=job.ruleset_id,
@@ -334,7 +356,8 @@ class TrainingJobService:
                     seed_weights=job.current_weights,
                 )
 
-            metrics = runtime.simulator.next_window(job.progress.windows_done)
+            league_opponents = self._collect_top_league_opponents_locked(job)
+            metrics = runtime.simulator.next_window(job.progress.windows_done, league_opponents=league_opponents)
             prev_best = job.progress.best_score
             job.progress.windows_done += 1
             job.progress.last_score = metrics.score
@@ -383,6 +406,7 @@ class TrainingJobService:
                 best_weights=job.best_weights,
             )
             self._checkpoints[job.id].append(checkpoint)
+            self._maybe_auto_promote_checkpoint_locked(job, runtime, checkpoint)
             self._event_bus.publish_sync(
                 event_type="training.checkpoint_created",
                 entity_id=job.id,
@@ -392,6 +416,144 @@ class TrainingJobService:
                     "batches_done": checkpoint.batches_done,
                     "path": checkpoint.path,
                 },
+            )
+
+    def _ensure_league_bootstrap_locked(self, job: TrainingJob) -> None:
+        if self._bot_catalog is None or self._league_service is None:
+            return
+
+        baseline_random = self._bot_catalog.ensure_bot(
+            bot_version_id=f"{job.ruleset_id}-baseline-random",
+            ruleset_id=job.ruleset_id,
+            policy_type="random",
+            feature_schema_version="classic_features_v1",
+            lookahead_policy_version="off",
+            weights={"hunt_heat": 0.2, "target_adjacent": 0.2},
+            tags={"baseline"},
+        )
+        baseline_strong = self._bot_catalog.ensure_bot(
+            bot_version_id=f"{job.ruleset_id}-baseline-strong",
+            ruleset_id=job.ruleset_id,
+            policy_type="probability_strong",
+            feature_schema_version="classic_features_v1",
+            lookahead_policy_version="adaptive_v1",
+            weights=job.current_weights,
+            tags={"baseline"},
+        )
+
+        self._league_service.register_bot(job.ruleset_id, baseline_random.bot_version_id, "baseline")
+        self._league_service.register_bot(job.ruleset_id, baseline_strong.bot_version_id, "baseline")
+
+        seed_bot_id = f"{job.id[:8]}-seed"
+        seed_bot = self._bot_catalog.ensure_bot(
+            bot_version_id=seed_bot_id,
+            ruleset_id=job.ruleset_id,
+            policy_type="probability_strong",
+            feature_schema_version="classic_features_v1",
+            lookahead_policy_version="adaptive_v1",
+            weights=job.current_weights,
+            tags={"active"},
+        )
+        self._league_service.register_bot(job.ruleset_id, seed_bot.bot_version_id, "active")
+
+    def _collect_top_league_opponents_locked(self, job: TrainingJob) -> list[dict[str, float]]:
+        if self._bot_catalog is None or self._league_service is None:
+            return []
+
+        try:
+            table = self._league_service.list_table(job.ruleset_id)
+        except KeyError:
+            return []
+        league_rows = [row for row in table if row.pool_type == "league"][: self._TOP_K_OPPONENTS]
+        if not league_rows:
+            league_rows = [row for row in table if row.pool_type == "active"][: self._TOP_K_OPPONENTS]
+
+        opponents: list[dict[str, float]] = []
+        for row in league_rows:
+            try:
+                bot = self._bot_catalog.get_bot(row.bot_version_id)
+            except KeyError:
+                continue
+            opponents.append(dict(bot.weights))
+        return opponents
+
+    def _maybe_auto_promote_checkpoint_locked(
+        self,
+        job: TrainingJob,
+        runtime: _TrainingRuntime,
+        checkpoint: TrainingCheckpoint,
+    ) -> None:
+        if self._bot_catalog is None or self._league_service is None:
+            return
+
+        if (job.progress.windows_done - runtime.last_auto_promote_window) < self._PROMOTE_EVERY_WINDOWS:
+            return
+
+        checkpoint_payload = self._checkpoint_store.load(checkpoint)
+        weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
+        if not weights:
+            return
+
+        bot_version_id = f"{job.id[:8]}-b{checkpoint.batches_done}"
+        try:
+            bot = self._bot_catalog.create_from_checkpoint(
+                bot_version_id=bot_version_id,
+                ruleset_id=job.ruleset_id,
+                checkpoint=checkpoint,
+                weights=weights,
+                policy_type="probability_strong",
+                feature_schema_version="classic_features_v1",
+                lookahead_policy_version="adaptive_v1",
+            )
+        except ValueError:
+            return
+
+        runtime.last_auto_promote_window = job.progress.windows_done
+        self._league_service.register_bot(job.ruleset_id, bot.bot_version_id, "active")
+        self._run_promotion_matches_locked(job, bot.bot_version_id, bot.weights)
+
+    def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
+        if self._bot_catalog is None or self._league_service is None:
+            return
+
+        try:
+            table = self._league_service.list_table(job.ruleset_id)
+        except KeyError:
+            return
+        opponents = [
+            row.bot_version_id
+            for row in table
+            if row.bot_version_id != candidate_id and row.pool_type in {"league", "baseline", "active"}
+        ][: self._TOP_K_OPPONENTS]
+
+        if not opponents:
+            return
+
+        try:
+            ruleset = get_ruleset(job.ruleset_id)
+        except KeyError:
+            return
+        for idx, opponent_id in enumerate(opponents):
+            try:
+                opponent = self._bot_catalog.get_bot(opponent_id)
+            except KeyError:
+                continue
+
+            rng = random.Random(job.seed * 1000 + job.progress.windows_done * 37 + idx)
+            result = play_strong_vs(
+                ruleset,
+                rng,
+                strong_weights=candidate_weights,
+                opponent_kind="strong",
+                opponent_weights=opponent.weights,
+                first_player=idx % 2,
+            )
+            winner_id = candidate_id if result.winner == 0 else opponent_id
+            self._league_service.record_match(
+                ruleset_id=job.ruleset_id,
+                bot_a_id=candidate_id,
+                bot_b_id=opponent_id,
+                winner_id=winner_id,
             )
 
     def _apply_stage_transitions_locked(self, job: TrainingJob) -> None:
@@ -416,6 +578,20 @@ class TrainingJobService:
             self._set_stage_locked(job, "PlateauCheck", reason="plateau_detected")
 
     def _should_finish_locked(self, job: TrainingJob) -> bool:
+        strong_target = max(job.params.target_score, 0.78)
+        if job.progress.last_score >= strong_target and job.progress.plateau_windows >= 3:
+            job.stop_reason = "strong_found_plateau"
+            return True
+
+        weak_window = max(4, job.params.plateau_patience_windows)
+        if (
+            job.progress.windows_done >= weak_window
+            and job.progress.best_score < 0.52
+            and job.progress.plateau_windows >= job.params.plateau_patience_windows
+        ):
+            job.stop_reason = "weak_plateau"
+            return True
+
         if job.progress.games_played >= job.params.budget_games:
             job.stop_reason = "budget_exhausted"
             return True

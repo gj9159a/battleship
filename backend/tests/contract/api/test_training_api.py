@@ -131,7 +131,13 @@ def test_training_adaptive_completion(client: TestClient) -> None:
 
     completed = _wait_for_state(client, job_id, 'Completed')
     assert completed['stage_state'] == 'Finished'
-    assert completed['stop_reason'] in ('plateau_early_stop', 'target_reached_plateau', 'budget_exhausted')
+    assert completed['stop_reason'] in (
+        'strong_found_plateau',
+        'weak_plateau',
+        'plateau_early_stop',
+        'target_reached_plateau',
+        'budget_exhausted',
+    )
 
 
 def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient) -> None:

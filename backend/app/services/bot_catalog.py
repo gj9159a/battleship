@@ -45,6 +45,41 @@ class BotCatalogService:
                 raise KeyError(f"Unknown bot_version_id={bot_version_id}")
             return bot
 
+    def ensure_bot(
+        self,
+        *,
+        bot_version_id: str,
+        ruleset_id: str,
+        policy_type: str,
+        feature_schema_version: str,
+        lookahead_policy_version: str,
+        weights: dict[str, float],
+        tags: set[str] | None = None,
+    ) -> BotVersion:
+        get_ruleset(ruleset_id)
+        with self._lock:
+            existing = self._bots.get(bot_version_id)
+            if existing is not None:
+                if existing.ruleset_id != ruleset_id:
+                    raise ValueError(
+                        f"bot_version_id={bot_version_id} already bound to ruleset_id={existing.ruleset_id}"
+                    )
+                return existing
+
+            created = BotVersion(
+                bot_version_id=bot_version_id,
+                ruleset_id=ruleset_id,
+                policy_type=policy_type,
+                feature_schema_version=feature_schema_version,
+                lookahead_policy_version=lookahead_policy_version,
+                weights=normalize_weights(weights),
+                source_job_id=None,
+                source_checkpoint_id=None,
+                tags=set(tags or set()),
+            )
+            self._bots[bot_version_id] = created
+            return created
+
     def create_from_checkpoint(
         self,
         *,

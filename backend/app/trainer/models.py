@@ -27,7 +27,7 @@ class TrainingParams:
     microbatch_size: int = 50
     eval_window_batches: int = 2
     checkpoint_interval_batches: int = 5
-    target_score: float = 0.72
+    target_score: float = 0.78
     improvement_delta: float = 0.01
     plateau_delta: float = 0.003
     plateau_patience_windows: int = 4

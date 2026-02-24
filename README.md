@@ -58,7 +58,9 @@ cargo check
 - `League`: регистрировать ботов, запускать season job, смотреть таблицу/матрицу
 - `Rulesets`: создать/клонировать/редактировать/архивировать/активировать ruleset
 - `Bots`: промоутить checkpoints в bot versions, импортировать в лигу, выбрать seed bot
+- `Training (auto league mode)`: при длительной тренировке чекпоинты автоматически промоутятся в bot versions и добавляются в league pool; top-16 пересобирается по `mu-3*sigma`.
 
 ## Ограничения текущего MVP
-- Trainer использует реальную self-play симуляцию матчей `strong vs baseline/active` c эволюционной мутацией весов.
+- Trainer использует реальную self-play симуляцию матчей `strong vs baseline/active/league(top-16)` c эволюционной мутацией весов.
+- Для eval против лиги используется `top_k_opponents = 16`.
 - Desktop CI проверяет `cargo check`; полноценная упаковка инсталлятора пока не включена в pipeline.

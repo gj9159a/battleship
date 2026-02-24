@@ -10,9 +10,13 @@ def create_app() -> FastAPI:
     event_bus = EventBus()
     app.state.event_bus = event_bus
     app.state.game_sessions = GameSessionService()
-    app.state.training_jobs = TrainingJobService(event_bus=event_bus)
     app.state.bot_catalog = BotCatalogService()
     app.state.league_service = LeagueService(event_bus=event_bus)
+    app.state.training_jobs = TrainingJobService(
+        event_bus=event_bus,
+        bot_catalog=app.state.bot_catalog,
+        league_service=app.state.league_service,
+    )
 
     app.include_router(api_router)
     return app

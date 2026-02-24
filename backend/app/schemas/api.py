@@ -118,7 +118,7 @@ class TrainingParamsDTO(BaseModel):
     microbatch_size: int = Field(default=50, gt=0)
     eval_window_batches: int = Field(default=2, gt=0)
     checkpoint_interval_batches: int = Field(default=5, gt=0)
-    target_score: float = Field(default=0.72, ge=0.0, le=1.0)
+    target_score: float = Field(default=0.78, ge=0.0, le=1.0)
     improvement_delta: float = Field(default=0.01, ge=0.0, le=1.0)
     plateau_delta: float = Field(default=0.003, ge=0.0, le=1.0)
     plateau_patience_windows: int = Field(default=4, gt=0)

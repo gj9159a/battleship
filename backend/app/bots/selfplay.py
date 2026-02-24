@@ -136,7 +136,12 @@ class SelfPlaySimulator:
     def current_weights(self) -> dict[str, float]:
         return dict(self._incumbent_weights)
 
-    def next_window(self, windows_done: int) -> WindowMetrics:
+    def next_window(
+        self,
+        windows_done: int,
+        *,
+        league_opponents: list[dict[str, float]] | None = None,
+    ) -> WindowMetrics:
         sigma = max(0.02, 0.18 * (0.985 ** windows_done))
         candidate = mutate_weights(self._rng, self._incumbent_weights, sigma)
 
@@ -163,14 +168,19 @@ class SelfPlaySimulator:
                 baseline_wins += 1
                 won_turns.append(result.shots_total)
 
+        resolved_league = [normalize_weights(item) for item in (league_opponents or [])]
         for idx in range(active_games):
             first_player = idx % 2
+            if resolved_league:
+                opponent_weights = resolved_league[idx % len(resolved_league)]
+            else:
+                opponent_weights = self._incumbent_weights
             result = play_strong_vs(
                 self._ruleset,
                 self._rng,
                 strong_weights=candidate,
                 opponent_kind="strong",
-                opponent_weights=self._incumbent_weights,
+                opponent_weights=opponent_weights,
                 first_player=first_player,
             )
             if result.winner == 0:

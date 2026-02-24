@@ -22,7 +22,7 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
   microbatch_size: 20,
   eval_window_batches: 1,
   checkpoint_interval_batches: 5,
-  target_score: 0.72,
+  target_score: 0.78,
   improvement_delta: 0.01,
   plateau_delta: 0.003,
   plateau_patience_windows: 4,
