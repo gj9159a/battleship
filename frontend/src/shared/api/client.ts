@@ -36,6 +36,10 @@ export function getRulesets(): Promise<RulesetDTO[]> {
   return request<RulesetDTO[]>('/api/v1/rulesets');
 }
 
+export function getBackendHealth(): Promise<{ status: string; service: string; ts: string }> {
+  return request<{ status: string; service: string; ts: string }>('/api/v1/health');
+}
+
 export function createGameSession(payload: {
   ruleset_id: string;
   player_placements: Placement[];

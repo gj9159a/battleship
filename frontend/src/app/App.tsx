@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { BackendStatusBar } from './components/BackendStatusBar';
 import { GamePage } from '../pages/game/GamePage';
 import { LeaguePage } from '../pages/league/LeaguePage';
 import { TrainingPage } from '../pages/training/TrainingPage';
@@ -39,6 +40,7 @@ export function App() {
           League
         </button>
       </nav>
+      <BackendStatusBar />
 
       <main>
         {screen === 'game' && <GamePage />}

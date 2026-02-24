@@ -49,6 +49,50 @@ body {
   margin-top: 14px;
 }
 
+.backend-bar {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: #f6fbf8;
+}
+
+.backend-pill {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.backend-pill-online {
+  color: #0e3c30;
+  background: #d8f0e7;
+}
+
+.backend-pill-offline {
+  color: #78342a;
+  background: #f6ddd7;
+}
+
+.backend-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.backend-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.backend-error {
+  font-size: 12px;
+  color: #8b2f21;
+}
+
 .nav-btn {
   border: 1px solid var(--line);
   border-radius: 999px;

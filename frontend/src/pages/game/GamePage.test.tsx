@@ -28,6 +28,17 @@ describe('GamePage', () => {
         );
       }
 
+      if (url.endsWith('/api/v1/health') && !init?.method) {
+        return new Response(
+          JSON.stringify({
+            status: 'ok',
+            service: 'battleship-backend',
+            ts: '2026-02-24T00:00:00+00:00',
+          }),
+          { status: 200 },
+        );
+      }
+
       if (url.endsWith('/api/v1/game/sessions') && init?.method === 'POST') {
         return new Response(
           JSON.stringify({
