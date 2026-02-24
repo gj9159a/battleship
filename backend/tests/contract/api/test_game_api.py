@@ -3,31 +3,21 @@ from fastapi.testclient import TestClient
 
 def _classic_placements_left() -> list[dict]:
     return [
-        {'row': 0, 'col': 0, 'length': 4, 'orientation': 'H'},
-        {'row': 2, 'col': 0, 'length': 3, 'orientation': 'H'},
+        {'row': 0, 'col': 0, 'length': 5, 'orientation': 'H'},
+        {'row': 2, 'col': 0, 'length': 4, 'orientation': 'H'},
         {'row': 4, 'col': 0, 'length': 3, 'orientation': 'H'},
-        {'row': 6, 'col': 0, 'length': 2, 'orientation': 'H'},
+        {'row': 6, 'col': 0, 'length': 3, 'orientation': 'H'},
         {'row': 8, 'col': 0, 'length': 2, 'orientation': 'H'},
-        {'row': 0, 'col': 5, 'length': 2, 'orientation': 'V'},
-        {'row': 3, 'col': 5, 'length': 1, 'orientation': 'H'},
-        {'row': 5, 'col': 5, 'length': 1, 'orientation': 'H'},
-        {'row': 7, 'col': 5, 'length': 1, 'orientation': 'H'},
-        {'row': 9, 'col': 5, 'length': 1, 'orientation': 'H'},
     ]
 
 
 def _classic_placements_right() -> list[dict]:
     return [
-        {'row': 0, 'col': 6, 'length': 4, 'orientation': 'H'},
-        {'row': 2, 'col': 6, 'length': 3, 'orientation': 'H'},
-        {'row': 4, 'col': 6, 'length': 3, 'orientation': 'H'},
-        {'row': 6, 'col': 6, 'length': 2, 'orientation': 'H'},
-        {'row': 8, 'col': 6, 'length': 2, 'orientation': 'H'},
-        {'row': 0, 'col': 1, 'length': 2, 'orientation': 'V'},
-        {'row': 3, 'col': 1, 'length': 1, 'orientation': 'H'},
-        {'row': 5, 'col': 1, 'length': 1, 'orientation': 'H'},
-        {'row': 7, 'col': 1, 'length': 1, 'orientation': 'H'},
-        {'row': 9, 'col': 1, 'length': 1, 'orientation': 'H'},
+        {'row': 0, 'col': 5, 'length': 5, 'orientation': 'H'},
+        {'row': 2, 'col': 6, 'length': 4, 'orientation': 'H'},
+        {'row': 4, 'col': 7, 'length': 3, 'orientation': 'H'},
+        {'row': 6, 'col': 7, 'length': 3, 'orientation': 'H'},
+        {'row': 8, 'col': 8, 'length': 2, 'orientation': 'H'},
     ]
 
 

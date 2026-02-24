@@ -4,8 +4,8 @@ CLASSIC_V1 = Ruleset(
     id="classic_v1",
     name="Classic Battleship v1",
     board_size=10,
-    fleet=(4, 3, 3, 2, 2, 2, 1, 1, 1, 1),
-    placement_no_touch=True,
+    fleet=(5, 4, 3, 3, 2),
+    placement_no_touch=False,
     extra_turn_on_hit=True,
 )
 
