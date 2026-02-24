@@ -166,3 +166,17 @@ def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient
     assert 'job.lifecycle_changed' in seen_types
     assert 'training.stage_changed' in seen_types
     assert 'training.metrics' in seen_types
+
+
+def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:
+    created = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed_bot_version_id': 'candidate-001',
+            'seed': 101,
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()['seed_bot_version_id'] == 'candidate-001'

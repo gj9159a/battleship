@@ -78,6 +78,7 @@ export type TrainingJobDTO = {
   lifecycle_state: TrainingLifecycleState;
   stage_state: string | null;
   profile_id: string | null;
+  seed_bot_version_id: string | null;
   seed: number | null;
   stop_reason: string | null;
   params: TrainingParamsDTO;
@@ -147,4 +148,27 @@ export type EventEnvelope<TPayload = Record<string, unknown>> = {
   seq: number;
   ts: string;
   payload: TPayload;
+};
+
+export type BotVersionDTO = {
+  bot_version_id: string;
+  ruleset_id: string;
+  policy_type: string;
+  feature_schema_version: string;
+  lookahead_policy_version: string;
+  weights: Record<string, number>;
+  source_job_id: string | null;
+  source_checkpoint_id: string | null;
+  tags: string[];
+  created_at: string;
+};
+
+export type TrainingCheckpointIndexDTO = {
+  job_id: string;
+  checkpoint_id: string;
+  ruleset_id: string;
+  batches_done: number;
+  games_played: number;
+  best_score: number;
+  stage_state: string | null;
 };

@@ -36,6 +36,44 @@ class RulesetUpdateRequest(BaseModel):
     extra_turn_on_hit: bool | None = None
 
 
+class BotVersionResponse(BaseModel):
+    bot_version_id: str
+    ruleset_id: str
+    policy_type: str
+    feature_schema_version: str
+    lookahead_policy_version: str
+    weights: dict[str, float]
+    source_job_id: str | None
+    source_checkpoint_id: str | None
+    tags: list[str]
+    created_at: str
+
+
+class BotVersionCreateFromCheckpointRequest(BaseModel):
+    job_id: str
+    checkpoint_id: str
+    bot_version_id: str | None = None
+    policy_type: str = "probability_strong"
+    feature_schema_version: str = "classic_features_v1"
+    lookahead_policy_version: str = "adaptive_v1"
+
+
+class BotVersionLabelsUpdateRequest(BaseModel):
+    is_baseline: bool | None = None
+    is_league: bool | None = None
+    is_legacy: bool | None = None
+
+
+class TrainingCheckpointIndexResponse(BaseModel):
+    job_id: str
+    checkpoint_id: str
+    ruleset_id: str
+    batches_done: int
+    games_played: int
+    best_score: float
+    stage_state: str | None
+
+
 class PlacementDTO(BaseModel):
     row: int = Field(ge=0)
     col: int = Field(ge=0)
@@ -91,6 +129,7 @@ class TrainingParamsDTO(BaseModel):
 class TrainingJobCreateRequest(BaseModel):
     ruleset_id: str
     profile_id: str | None = None
+    seed_bot_version_id: str | None = None
     seed: int | None = None
     params: TrainingParamsDTO | None = None
 
@@ -133,6 +172,7 @@ class TrainingJobResponse(BaseModel):
     ]
     stage_state: str | None
     profile_id: str | None
+    seed_bot_version_id: str | None
     seed: int | None
     stop_reason: str | None
     params: TrainingParamsDTO

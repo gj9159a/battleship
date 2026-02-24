@@ -22,6 +22,7 @@ def _to_response(job) -> TrainingJobResponse:
         lifecycle_state=job.lifecycle_state,
         stage_state=job.stage_state,
         profile_id=job.profile_id,
+        seed_bot_version_id=job.seed_bot_version_id,
         seed=job.seed,
         stop_reason=job.stop_reason,
         params=TrainingParamsDTO(
@@ -54,7 +55,13 @@ async def create_training_job(
 ) -> TrainingJobResponse:
     try:
         params = TrainingParams(**payload.params.model_dump()) if payload.params else TrainingParams()
-        job = training_jobs.create_job(payload.ruleset_id, payload.profile_id, payload.seed, params=params)
+        job = training_jobs.create_job(
+            payload.ruleset_id,
+            payload.profile_id,
+            payload.seed_bot_version_id,
+            payload.seed,
+            params=params,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

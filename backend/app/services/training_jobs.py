@@ -17,6 +17,7 @@ class TrainingJob:
     lifecycle_state: LifecycleState
     stage_state: StageState | None
     profile_id: str | None
+    seed_bot_version_id: str | None
     seed: int
     params: TrainingParams
     progress: TrainingProgress
@@ -46,7 +47,8 @@ class TrainingJobService:
         self,
         ruleset_id: str,
         profile_id: str | None,
-        seed: int | None,
+        seed_bot_version_id: str | None = None,
+        seed: int | None = None,
         params: TrainingParams | None = None,
     ) -> TrainingJob:
         get_ruleset(ruleset_id)
@@ -58,6 +60,7 @@ class TrainingJobService:
             lifecycle_state="Idle",
             stage_state=None,
             profile_id=profile_id,
+            seed_bot_version_id=seed_bot_version_id,
             seed=resolved_seed,
             params=resolved_params,
             progress=TrainingProgress(),
@@ -80,6 +83,16 @@ class TrainingJobService:
             if job_id not in self._jobs:
                 raise KeyError(f"Unknown training job id={job_id}")
             return list(self._checkpoints.get(job_id, []))
+
+    def list_all_checkpoints(self, ruleset_id: str | None = None) -> list[tuple[TrainingJob, TrainingCheckpoint]]:
+        with self._lock:
+            rows: list[tuple[TrainingJob, TrainingCheckpoint]] = []
+            for job_id, job in self._jobs.items():
+                if ruleset_id is not None and job.ruleset_id != ruleset_id:
+                    continue
+                for checkpoint in self._checkpoints.get(job_id, []):
+                    rows.append((job, checkpoint))
+            return rows
 
     async def load_checkpoint(self, job_id: str, checkpoint_id: str) -> TrainingJob:
         with self._lock:

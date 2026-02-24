@@ -1,6 +1,6 @@
 from fastapi import Request
 
-from app.services import EventBus, GameSessionService, LeagueService, TrainingJobService
+from app.services import BotCatalogService, EventBus, GameSessionService, LeagueService, TrainingJobService
 
 
 def get_game_sessions(request: Request) -> GameSessionService:
@@ -9,6 +9,10 @@ def get_game_sessions(request: Request) -> GameSessionService:
 
 def get_training_jobs(request: Request) -> TrainingJobService:
     return request.app.state.training_jobs
+
+
+def get_bot_catalog(request: Request) -> BotCatalogService:
+    return request.app.state.bot_catalog
 
 
 def get_league_service(request: Request) -> LeagueService:

@@ -20,6 +20,7 @@ const JOB_IDLE = {
   lifecycle_state: 'Idle',
   stage_state: null,
   profile_id: null,
+  seed_bot_version_id: null,
   seed: 42,
   stop_reason: null,
   params: {

@@ -1,4 +1,7 @@
 from .api import (
+    BotVersionCreateFromCheckpointRequest,
+    BotVersionLabelsUpdateRequest,
+    BotVersionResponse,
     GameSessionCreateRequest,
     GameSessionResponse,
     LeagueJobCommandRequest,
@@ -17,6 +20,7 @@ from .api import (
     ShotResponse,
     ShotRequest,
     TrainingCheckpointResponse,
+    TrainingCheckpointIndexResponse,
     TrainingCommandRequest,
     TrainingJobCreateRequest,
     TrainingParamsDTO,
@@ -27,6 +31,9 @@ from .api import (
 __all__ = [
     "GameSessionCreateRequest",
     "GameSessionResponse",
+    "BotVersionCreateFromCheckpointRequest",
+    "BotVersionLabelsUpdateRequest",
+    "BotVersionResponse",
     "LeagueJobCommandRequest",
     "LeagueMatchRecordRequest",
     "LeagueMatchResponse",
@@ -43,6 +50,7 @@ __all__ = [
     "ShotResponse",
     "ShotRequest",
     "TrainingCheckpointResponse",
+    "TrainingCheckpointIndexResponse",
     "TrainingCommandRequest",
     "TrainingJobCreateRequest",
     "TrainingParamsDTO",

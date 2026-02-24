@@ -29,6 +29,7 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
   early_stop_plateau_windows: 8,
   tick_delay_ms: 10,
 };
+const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
 type MetricPoint = {
   window: number;
@@ -46,6 +47,7 @@ export function TrainingPage() {
   const [rulesets, setRulesets] = useState<RulesetDTO[]>([]);
   const [selectedRulesetId, setSelectedRulesetId] = useState('classic_v1');
   const [seedInput, setSeedInput] = useState('42');
+  const [seedBotVersionId, setSeedBotVersionId] = useState('');
   const [params, setParams] = useState<TrainingParamsDTO>(DEFAULT_PARAMS);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -58,6 +60,13 @@ export function TrainingPage() {
   const [statusText, setStatusText] = useState('Загрузка rulesets...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+
+  useEffect(() => {
+    const storedSeedBot = window.localStorage.getItem(SEED_BOT_STORAGE_KEY);
+    if (storedSeedBot) {
+      setSeedBotVersionId(storedSeedBot);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -185,6 +194,7 @@ export function TrainingPage() {
     try {
       const created = await createTrainingJob({
         ruleset_id: selectedRulesetId,
+        seed_bot_version_id: seedBotVersionId.trim() || null,
         seed: toNumber(seedInput, 42),
         params,
       });
@@ -252,6 +262,16 @@ export function TrainingPage() {
               </option>
             ))}
           </select>
+        </label>
+
+        <label>
+          Seed bot version (optional)
+          <input
+            aria-label="Seed bot version"
+            value={seedBotVersionId}
+            onChange={(event) => setSeedBotVersionId(event.target.value)}
+            disabled={isBusy}
+          />
         </label>
 
         <label>
@@ -392,6 +412,8 @@ export function TrainingPage() {
             Lifecycle: {job.lifecycle_state}
             <br />
             Stage: {job.stage_state ?? '-'}
+            <br />
+            Seed bot: {job.seed_bot_version_id ?? '-'}
             <br />
             Stop reason: {job.stop_reason ?? '-'}
           </div>
