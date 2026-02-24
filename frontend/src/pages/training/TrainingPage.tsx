@@ -53,6 +53,34 @@ type MetricPoint = {
   strictness: number;
 };
 
+function buildPolyline(
+  points: MetricPoint[],
+  valueGetter: (point: MetricPoint) => number,
+  width: number,
+  height: number,
+): string {
+  if (points.length === 0) {
+    return '';
+  }
+  const sorted = [...points].sort((left, right) => left.batch - right.batch);
+  if (sorted.length === 1) {
+    const value = Math.max(0, Math.min(1, valueGetter(sorted[0])));
+    const y = height - value * height;
+    return `0,${y.toFixed(2)} ${width},${y.toFixed(2)}`;
+  }
+
+  const denominator = Math.max(1, sorted.length - 1);
+  const coords: string[] = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const point = sorted[index];
+    const x = (index / denominator) * width;
+    const value = Math.max(0, Math.min(1, valueGetter(point)));
+    const y = height - value * height;
+    coords.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  return coords.join(' ');
+}
+
 function toNumber(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -101,7 +129,7 @@ export function TrainingPage() {
           try {
             const parsed = JSON.parse(raw) as MetricPoint[];
             if (Array.isArray(parsed)) {
-              setMetrics(parsed.slice(0, 30));
+              setMetrics(parsed.slice(0, 120));
             }
           } catch {
             window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
@@ -189,6 +217,16 @@ export function TrainingPage() {
     setCheckpoints(items);
   }
 
+  function upsertMetric(point: MetricPoint, jobId: string) {
+    setMetrics((prev) => {
+      const merged = [point, ...prev.filter((item) => item.batch !== point.batch)]
+        .sort((left, right) => right.batch - left.batch)
+        .slice(0, 120);
+      window.localStorage.setItem(`${METRICS_STORAGE_KEY_PREFIX}${jobId}`, JSON.stringify(merged));
+      return merged;
+    });
+  }
+
   useEffect(() => {
     if (!job) {
       return;
@@ -243,11 +281,7 @@ export function TrainingPage() {
           cycle: Number(event.payload.cycle_index ?? 0),
           strictness: Number(event.payload.strictness_level ?? 0),
         };
-        setMetrics((prev) => {
-          const next = [point, ...prev].slice(0, 30);
-          window.localStorage.setItem(`${METRICS_STORAGE_KEY_PREFIX}${job.id}`, JSON.stringify(next));
-          return next;
-        });
+        upsertMetric(point, job.id);
       }
 
       if (event.event_type === 'job.lifecycle_changed' || event.event_type === 'training.checkpoint_created') {
@@ -265,11 +299,41 @@ export function TrainingPage() {
     };
   }, [job]);
 
+  useEffect(() => {
+    if (!job || job.progress.batches_done <= 0) {
+      return;
+    }
+    upsertMetric(
+      {
+        batch: job.progress.batches_done,
+        window: job.progress.windows_done,
+        score: job.progress.last_score,
+        best: job.progress.best_score,
+        plateau: job.progress.plateau_windows,
+        cycle: job.progress.cycle_index,
+        strictness: job.progress.strictness_level,
+      },
+      job.id,
+    );
+  }, [
+    job?.id,
+    job?.progress.batches_done,
+    job?.progress.windows_done,
+    job?.progress.last_score,
+    job?.progress.best_score,
+    job?.progress.plateau_windows,
+    job?.progress.cycle_index,
+    job?.progress.strictness_level,
+  ]);
+
   const canPause = job?.lifecycle_state === 'Running';
   const canResume = job?.lifecycle_state === 'Paused';
   const canStop = job ? ['Running', 'Pausing', 'Paused'].includes(job.lifecycle_state) : false;
 
   const latestMetrics = useMemo(() => metrics.slice(0, 10), [metrics]);
+  const chartPoints = useMemo(() => metrics.slice(0, 80), [metrics]);
+  const scorePolyline = useMemo(() => buildPolyline(chartPoints, (point) => point.score, 420, 120), [chartPoints]);
+  const bestPolyline = useMemo(() => buildPolyline(chartPoints, (point) => point.best, 420, 120), [chartPoints]);
 
   async function onStartTraining() {
     if (isBusy) {
@@ -673,6 +737,20 @@ export function TrainingPage() {
       <div className="screen-content">
         <section className="panel">
           <h3>Метрики в реальном времени</h3>
+          <div className="training-charts" data-testid="training-charts">
+            <div className="training-chart">
+              <div className="training-chart-title">Score</div>
+              <svg viewBox="0 0 420 120" aria-label="График score">
+                <polyline className="chart-line-score" points={scorePolyline} />
+              </svg>
+            </div>
+            <div className="training-chart">
+              <div className="training-chart-title">Best Score</div>
+              <svg viewBox="0 0 420 120" aria-label="График best score">
+                <polyline className="chart-line-best" points={bestPolyline} />
+              </svg>
+            </div>
+          </div>
           <table className="data-table" data-testid="training-metrics-table">
             <thead>
                 <tr>
