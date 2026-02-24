@@ -60,7 +60,9 @@ export function App() {
 
       <main>
         {screen === 'game' && <GamePage />}
-        {screen === 'training' && <TrainingPage />}
+        <section hidden={screen !== 'training'} aria-hidden={screen !== 'training'}>
+          <TrainingPage />
+        </section>
         {screen === 'league' && <LeaguePage />}
         {screen === 'rulesets' && <RulesetsPage />}
         {screen === 'bots' && <BotsPage />}
