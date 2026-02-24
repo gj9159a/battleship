@@ -23,13 +23,13 @@ StageState = Literal[
 
 @dataclass(slots=True)
 class TrainingParams:
-    microbatch_size: int = 80
+    microbatch_size: int = 100
     eval_window_batches: int = 2
     checkpoint_interval_batches: int = 50
-    population_size: int = 24
+    population_size: int = 32
     train_split: float = 0.7
     worker_count: int = 12
-    quality_gate_games: int = 240
+    quality_gate_games: int = 256
     quality_gate_min_winrate: float = 0.57
     quality_gate_min_lower_bound: float = 0.53
     target_score: float = 0.8

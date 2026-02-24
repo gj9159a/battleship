@@ -18,13 +18,13 @@ import type {
 } from '../../shared/api/types';
 
 const DEFAULT_PARAMS: TrainingParamsDTO = {
-  microbatch_size: 80,
+  microbatch_size: 100,
   eval_window_batches: 2,
   checkpoint_interval_batches: 50,
-  population_size: 24,
+  population_size: 32,
   train_split: 0.7,
   worker_count: 12,
-  quality_gate_games: 240,
+  quality_gate_games: 256,
   quality_gate_min_winrate: 0.57,
   quality_gate_min_lower_bound: 0.53,
   target_score: 0.8,
