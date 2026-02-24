@@ -51,10 +51,15 @@ export type TrainingLifecycleState =
   | 'Error';
 
 export type TrainingParamsDTO = {
-  budget_games: number;
   microbatch_size: number;
   eval_window_batches: number;
   checkpoint_interval_batches: number;
+  population_size: number;
+  train_split: number;
+  worker_count: number;
+  quality_gate_games: number;
+  quality_gate_min_winrate: number;
+  quality_gate_min_lower_bound: number;
   target_score: number;
   improvement_delta: number;
   plateau_delta: number;

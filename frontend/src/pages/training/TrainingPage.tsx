@@ -18,10 +18,15 @@ import type {
 } from '../../shared/api/types';
 
 const DEFAULT_PARAMS: TrainingParamsDTO = {
-  budget_games: 5000,
   microbatch_size: 20,
   eval_window_batches: 1,
   checkpoint_interval_batches: 5,
+  population_size: 16,
+  train_split: 0.65,
+  worker_count: 12,
+  quality_gate_games: 120,
+  quality_gate_min_winrate: 0.55,
+  quality_gate_min_lower_bound: 0.5,
   target_score: 0.78,
   improvement_delta: 0.01,
   plateau_delta: 0.003,
@@ -285,15 +290,6 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Лимит игр
-          <input
-            aria-label="Лимит игр"
-            value={params.budget_games}
-            onChange={(event) => setParams((prev) => ({ ...prev, budget_games: toNumber(event.target.value, prev.budget_games) }))}
-          />
-        </label>
-
-        <label>
           Микробатч
           <input
             aria-label="Микробатч"
@@ -335,6 +331,81 @@ export function TrainingPage() {
 
         {showAdvanced && (
           <div className="advanced-grid">
+            <label>
+              Популяция
+              <input
+                aria-label="Популяция"
+                value={params.population_size}
+                onChange={(event) =>
+                  setParams((prev) => ({ ...prev, population_size: toNumber(event.target.value, prev.population_size) }))
+                }
+              />
+            </label>
+
+            <label>
+              Доля train
+              <input
+                aria-label="Доля train"
+                value={params.train_split}
+                onChange={(event) =>
+                  setParams((prev) => ({ ...prev, train_split: toNumber(event.target.value, prev.train_split) }))
+                }
+              />
+            </label>
+
+            <label>
+              Число worker
+              <input
+                aria-label="Число worker"
+                value={params.worker_count}
+                onChange={(event) =>
+                  setParams((prev) => ({ ...prev, worker_count: toNumber(event.target.value, prev.worker_count) }))
+                }
+              />
+            </label>
+
+            <label>
+              Игр quality gate
+              <input
+                aria-label="Игр quality gate"
+                value={params.quality_gate_games}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    quality_gate_games: toNumber(event.target.value, prev.quality_gate_games),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Мин. winrate quality gate
+              <input
+                aria-label="Мин. winrate quality gate"
+                value={params.quality_gate_min_winrate}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    quality_gate_min_winrate: toNumber(event.target.value, prev.quality_gate_min_winrate),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Мин. нижняя граница quality gate
+              <input
+                aria-label="Мин. нижняя граница quality gate"
+                value={params.quality_gate_min_lower_bound}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    quality_gate_min_lower_bound: toNumber(event.target.value, prev.quality_gate_min_lower_bound),
+                  }))
+                }
+              />
+            </label>
+
             <label>
               Целевой score
               <input

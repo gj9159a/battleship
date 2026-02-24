@@ -18,14 +18,14 @@ class StrongBotConfig:
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     "hunt_heat": 1.0,
-    "hunt_parity": 0.18,
-    "hunt_center": 0.12,
-    "target_adjacent": 0.9,
-    "target_line": 0.4,
-    "target_heat": 0.75,
-    "lookahead_hit": 0.65,
-    "lookahead_miss": -0.1,
-    "lookahead_depth2": 0.35,
+    "hunt_parity": 0.24,
+    "hunt_center": 0.16,
+    "target_adjacent": 1.05,
+    "target_line": 0.48,
+    "target_heat": 0.82,
+    "lookahead_hit": 0.72,
+    "lookahead_miss": -0.06,
+    "lookahead_depth2": 0.44,
 }
 
 
@@ -97,14 +97,16 @@ class StrongBotPolicy:
         heat = self._build_heat(target_mode=target_mode)
         total_heat = sum(max(0.0, value) for value in heat.values())
         max_prob = max((value for value in heat.values()), default=0.0)
+        candidates = self._candidate_cells(available, target_mode)
 
         depth = self._resolve_depth(
             target_mode=target_mode,
             max_prob=max_prob,
             remaining_cells=len(available),
+            target_candidates=len(candidates),
+            target_hits=len(self._hits_pending),
         )
 
-        candidates = self._candidate_cells(available, target_mode)
         scored: list[tuple[float, Coord]] = []
         for cell in candidates:
             base_score = self._base_score(cell, heat=heat, target_mode=target_mode)
@@ -118,7 +120,8 @@ class StrongBotPolicy:
 
             if depth >= 2:
                 neighborhood = self._neighbor_average_heat(cell, heat)
-                base_score += self._weights["lookahead_depth2"] * probability * neighborhood
+                frontier_focus = 1.0 / max(1, len(candidates))
+                base_score += self._weights["lookahead_depth2"] * probability * neighborhood * (1.0 + frontier_focus)
 
             tie_noise = self._rng.random() * 1e-9
             scored.append((base_score + tie_noise, cell))
@@ -179,7 +182,15 @@ class StrongBotPolicy:
             + self._weights["target_heat"] * heat.get(cell, 0.0)
         )
 
-    def _resolve_depth(self, *, target_mode: bool, max_prob: float, remaining_cells: int) -> int:
+    def _resolve_depth(
+        self,
+        *,
+        target_mode: bool,
+        max_prob: float,
+        remaining_cells: int,
+        target_candidates: int,
+        target_hits: int,
+    ) -> int:
         mode = self._config.lookahead_mode
         if mode == "off":
             return 0
@@ -193,13 +204,16 @@ class StrongBotPolicy:
             return 1
 
         aligned = self._has_alignment()
-        if target_mode and (len(self._hits_pending) >= 2 or aligned):
+        if target_mode and (target_hits >= 2 or aligned):
             return 2
 
-        if remaining_cells <= max(30, self._size * self._size // 3) and max_prob >= 0.14:
+        if target_mode and target_hits >= 1 and target_candidates <= max(6, self._size // 2):
             return 2
 
-        if max_prob >= 0.28:
+        if remaining_cells <= max(40, self._size * self._size // 2) and max_prob >= 0.12:
+            return 2
+
+        if max_prob >= 0.24:
             return 2
 
         return 1

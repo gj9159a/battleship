@@ -114,10 +114,15 @@ class GameSessionResponse(BaseModel):
 
 
 class TrainingParamsDTO(BaseModel):
-    budget_games: int = Field(default=2000, gt=0)
     microbatch_size: int = Field(default=50, gt=0)
     eval_window_batches: int = Field(default=2, gt=0)
     checkpoint_interval_batches: int = Field(default=5, gt=0)
+    population_size: int = Field(default=16, gt=0)
+    train_split: float = Field(default=0.65, ge=0.5, le=0.9)
+    worker_count: int = Field(default=12, gt=0)
+    quality_gate_games: int = Field(default=120, gt=0)
+    quality_gate_min_winrate: float = Field(default=0.55, ge=0.0, le=1.0)
+    quality_gate_min_lower_bound: float = Field(default=0.50, ge=0.0, le=1.0)
     target_score: float = Field(default=0.78, ge=0.0, le=1.0)
     improvement_delta: float = Field(default=0.01, ge=0.0, le=1.0)
     plateau_delta: float = Field(default=0.003, ge=0.0, le=1.0)

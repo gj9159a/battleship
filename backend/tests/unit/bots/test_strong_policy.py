@@ -35,8 +35,22 @@ def test_strong_bot_policy_is_deterministic_for_same_seed() -> None:
 
 
 def test_self_play_simulator_is_deterministic() -> None:
-    s1 = SelfPlaySimulator(ruleset_id="classic_v1", seed=77, window_games=4)
-    s2 = SelfPlaySimulator(ruleset_id="classic_v1", seed=77, window_games=4)
+    s1 = SelfPlaySimulator(
+        ruleset_id="classic_v1",
+        seed=77,
+        window_games=4,
+        population_size=4,
+        train_split=0.6,
+        worker_count=1,
+    )
+    s2 = SelfPlaySimulator(
+        ruleset_id="classic_v1",
+        seed=77,
+        window_games=4,
+        population_size=4,
+        train_split=0.6,
+        worker_count=1,
+    )
 
     seq1 = [s1.next_window(i).score for i in range(3)]
     seq2 = [s2.next_window(i).score for i in range(3)]

@@ -1,5 +1,6 @@
 import threading
 import time
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
@@ -96,6 +97,9 @@ class TrainingJobService:
                     ruleset_id=ruleset_id,
                     seed=resolved_seed,
                     window_games=resolved_params.microbatch_size * resolved_params.eval_window_batches,
+                    population_size=resolved_params.population_size,
+                    train_split=resolved_params.train_split,
+                    worker_count=resolved_params.worker_count,
                     seed_weights=normalized_seed_weights,
                 )
             )
@@ -155,10 +159,15 @@ class TrainingJobService:
             job.best_weights = normalize_weights(payload.get("best_weights"))
 
             runtime = self._runtimes[job.id]
+            if runtime.simulator is not None:
+                runtime.simulator.close()
             runtime.simulator = SelfPlaySimulator(
                 ruleset_id=job.ruleset_id,
                 seed=job.seed + job.progress.windows_done,
                 window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                population_size=job.params.population_size,
+                train_split=job.params.train_split,
+                worker_count=job.params.worker_count,
                 seed_weights=job.current_weights,
             )
 
@@ -254,6 +263,8 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason)
                     self._set_state_locked(job, "Stopped")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                 else:
                     runtime.run_gate.set()
                 return job
@@ -268,6 +279,10 @@ class TrainingJobService:
                 state = job.lifecycle_state
 
             if state in {"Stopped", "Completed", "Error"}:
+                with self._lock:
+                    runtime = self._runtimes[job_id]
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                 return
 
             runtime.run_gate.wait()
@@ -280,6 +295,8 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason or "stopped")
                     self._set_state_locked(job, "Stopped")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                     return
 
                 if job.lifecycle_state == "Pausing":
@@ -305,6 +322,8 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason or "stopped")
                     self._set_state_locked(job, "Stopped")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                     return
 
                 if job.lifecycle_state == "Pausing":
@@ -322,12 +341,16 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Finished", reason="runtime_error")
                     self._set_state_locked(job, "Error")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                     return
 
                 if runtime.stop_requested:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason or "stopped")
                     self._set_state_locked(job, "Stopped")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                     return
 
                 if runtime.pause_requested:
@@ -339,6 +362,8 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Finished", reason=job.stop_reason or "completed")
                     self._set_state_locked(job, "Completed")
                     runtime.run_gate.clear()
+                    if runtime.simulator is not None:
+                        runtime.simulator.close()
                     return
 
             time.sleep(0.0005)
@@ -353,6 +378,9 @@ class TrainingJobService:
                     ruleset_id=job.ruleset_id,
                     seed=job.seed + job.progress.windows_done,
                     window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                    population_size=job.params.population_size,
+                    train_split=job.params.train_split,
+                    worker_count=job.params.worker_count,
                     seed_weights=job.current_weights,
                 )
 
@@ -494,6 +522,24 @@ class TrainingJobService:
         if not weights:
             return
 
+        gate = self._run_quality_gate_locked(job, normalize_weights(weights))
+        if not gate["passed"]:
+            self._event_bus.publish_sync(
+                event_type="training.quality_gate_failed",
+                entity_id=job.id,
+                ruleset_id=job.ruleset_id,
+                payload={
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "games": gate["games"],
+                    "wins": gate["wins"],
+                    "winrate": gate["winrate"],
+                    "lower_bound": gate["lower_bound"],
+                    "required_winrate": job.params.quality_gate_min_winrate,
+                    "required_lower_bound": job.params.quality_gate_min_lower_bound,
+                },
+            )
+            return
+
         bot_version_id = f"{job.id[:8]}-b{checkpoint.batches_done}"
         try:
             bot = self._bot_catalog.create_from_checkpoint(
@@ -510,6 +556,19 @@ class TrainingJobService:
 
         runtime.last_auto_promote_window = job.progress.windows_done
         self._league_service.register_bot(job.ruleset_id, bot.bot_version_id, "active")
+        self._event_bus.publish_sync(
+            event_type="training.quality_gate_passed",
+            entity_id=job.id,
+            ruleset_id=job.ruleset_id,
+            payload={
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "bot_version_id": bot.bot_version_id,
+                "games": gate["games"],
+                "wins": gate["wins"],
+                "winrate": gate["winrate"],
+                "lower_bound": gate["lower_bound"],
+            },
+        )
         self._run_promotion_matches_locked(job, bot.bot_version_id, bot.weights)
 
     def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
@@ -556,6 +615,72 @@ class TrainingJobService:
                 winner_id=winner_id,
             )
 
+    def _run_quality_gate_locked(self, job: TrainingJob, candidate_weights: dict[str, float]) -> dict[str, float | int | bool]:
+        if self._bot_catalog is None or self._league_service is None:
+            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+
+        try:
+            table = self._league_service.list_table(job.ruleset_id)
+            ruleset = get_ruleset(job.ruleset_id)
+        except KeyError:
+            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+
+        opponents = [
+            row.bot_version_id
+            for row in table
+            if row.pool_type in {"league", "baseline", "active"}
+        ][: self._TOP_K_OPPONENTS]
+        if not opponents:
+            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+
+        games = max(2, job.params.quality_gate_games)
+        wins = 0
+
+        for idx in range(games):
+            opponent_id = opponents[idx % len(opponents)]
+            try:
+                opponent = self._bot_catalog.get_bot(opponent_id)
+            except KeyError:
+                continue
+
+            rng = random.Random(job.seed * 10_007 + job.progress.windows_done * 503 + idx * 13)
+            result = play_strong_vs(
+                ruleset,
+                rng,
+                strong_weights=candidate_weights,
+                opponent_kind="strong",
+                opponent_weights=opponent.weights,
+                first_player=idx % 2,
+            )
+            if result.winner == 0:
+                wins += 1
+
+        total = max(1, games)
+        winrate = wins / total
+        lower_bound = self._wilson_lower_bound(wins=wins, total=total)
+        passed = (
+            winrate >= job.params.quality_gate_min_winrate
+            and lower_bound >= job.params.quality_gate_min_lower_bound
+        )
+        return {
+            "passed": passed,
+            "games": total,
+            "wins": wins,
+            "winrate": round(winrate, 6),
+            "lower_bound": round(lower_bound, 6),
+        }
+
+    @staticmethod
+    def _wilson_lower_bound(*, wins: int, total: int, z: float = 1.96) -> float:
+        if total <= 0:
+            return 0.0
+        p = wins / total
+        z2 = z * z
+        denom = 1 + z2 / total
+        center = p + z2 / (2 * total)
+        margin = z * math.sqrt((p * (1 - p) + z2 / (4 * total)) / total)
+        return max(0.0, (center - margin) / denom)
+
     def _apply_stage_transitions_locked(self, job: TrainingJob) -> None:
         stage = job.stage_state
         if stage is None:
@@ -590,10 +715,6 @@ class TrainingJobService:
             and job.progress.plateau_windows >= job.params.plateau_patience_windows
         ):
             job.stop_reason = "weak_plateau"
-            return True
-
-        if job.progress.games_played >= job.params.budget_games:
-            job.stop_reason = "budget_exhausted"
             return True
 
         if job.progress.plateau_windows >= job.params.early_stop_plateau_windows:

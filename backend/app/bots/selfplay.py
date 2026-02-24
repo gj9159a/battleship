@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import concurrent.futures
+import multiprocessing as mp
 import random
 from dataclasses import dataclass
 
@@ -17,6 +19,17 @@ from .policy import RandomBotPolicy, StrongBotConfig, StrongBotPolicy, normalize
 class MatchResult:
     winner: int
     shots_total: int
+
+
+@dataclass(frozen=True, slots=True)
+class _EvalRequest:
+    ruleset_id: str
+    seed: int
+    strong_weights: dict[str, float]
+    reference_weights: dict[str, float]
+    league_opponents: list[dict[str, float]]
+    baseline_games: int
+    active_games: int
 
 
 def mutate_weights(rng: random.Random, source: dict[str, float], sigma: float) -> dict[str, float]:
@@ -102,11 +115,68 @@ def play_strong_vs(
         shots_total += 1
 
         if shots_total > ruleset.board_size * ruleset.board_size * 4:
-            # Defensive bound: should never happen under valid logic.
             raise RuntimeError("Self-play exceeded shot safety limit")
 
     assert game.winner is not None
     return MatchResult(winner=game.winner, shots_total=shots_total)
+
+
+def _evaluate_candidate_window(payload: _EvalRequest) -> WindowMetrics:
+    ruleset = get_ruleset(payload.ruleset_id)
+    rng = random.Random(payload.seed)
+
+    strong_weights = normalize_weights(payload.strong_weights)
+    reference_weights = normalize_weights(payload.reference_weights)
+    league_weights = [normalize_weights(item) for item in payload.league_opponents]
+
+    baseline_wins = 0
+    active_wins = 0
+    won_turns: list[int] = []
+
+    for idx in range(payload.baseline_games):
+        first_player = idx % 2
+        opponent_kind = "random" if idx % 2 == 0 else "strong"
+        baseline_weights = None if opponent_kind == "random" else normalize_weights(None)
+        result = play_strong_vs(
+            ruleset,
+            rng,
+            strong_weights=strong_weights,
+            opponent_kind=opponent_kind,
+            opponent_weights=baseline_weights,
+            first_player=first_player,
+        )
+        if result.winner == 0:
+            baseline_wins += 1
+            won_turns.append(result.shots_total)
+
+    for idx in range(payload.active_games):
+        first_player = idx % 2
+        if league_weights:
+            opponent_weights = league_weights[idx % len(league_weights)]
+        else:
+            opponent_weights = reference_weights
+        result = play_strong_vs(
+            ruleset,
+            rng,
+            strong_weights=strong_weights,
+            opponent_kind="strong",
+            opponent_weights=opponent_weights,
+            first_player=first_player,
+        )
+        if result.winner == 0:
+            active_wins += 1
+            won_turns.append(result.shots_total)
+
+    wr_baseline = baseline_wins / payload.baseline_games
+    wr_active = active_wins / payload.active_games
+    avg_turns_win = float(sum(won_turns) / len(won_turns)) if won_turns else ruleset.board_size * 7.0
+    score = compute_score(wr_baseline, wr_active, avg_turns_win)
+    return WindowMetrics(
+        wr_baseline=round(wr_baseline, 6),
+        wr_active=round(wr_active, 6),
+        avg_turns_win=round(avg_turns_win, 6),
+        score=round(score, 6),
+    )
 
 
 class SelfPlaySimulator:
@@ -116,17 +186,41 @@ class SelfPlaySimulator:
         ruleset_id: str,
         seed: int,
         window_games: int,
+        population_size: int,
+        train_split: float,
+        worker_count: int,
         seed_weights: dict[str, float] | None = None,
     ) -> None:
         self._ruleset = get_ruleset(ruleset_id)
+        self._ruleset_id = ruleset_id
+        self._seed = seed
         self._rng = random.Random(seed)
         self._window_games = max(4, window_games)
+        self._population_size = max(1, population_size)
+        self._train_split = min(0.9, max(0.5, train_split))
+        self._worker_count = max(1, worker_count)
 
         base = normalize_weights(seed_weights)
         self._incumbent_weights = dict(base)
         self._incumbent_score = 0.0
         self._best_weights = dict(base)
         self._best_score = 0.0
+
+        self._executor: concurrent.futures.ProcessPoolExecutor | None = None
+        if self._worker_count > 1:
+            ctx = mp.get_context("spawn")
+            self._executor = concurrent.futures.ProcessPoolExecutor(
+                max_workers=self._worker_count,
+                mp_context=ctx,
+            )
+
+    def close(self) -> None:
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None
+
+    def __del__(self) -> None:
+        self.close()
 
     @property
     def best_weights(self) -> dict[str, float]:
@@ -142,67 +236,127 @@ class SelfPlaySimulator:
         *,
         league_opponents: list[dict[str, float]] | None = None,
     ) -> WindowMetrics:
-        sigma = max(0.02, 0.18 * (0.985 ** windows_done))
-        candidate = mutate_weights(self._rng, self._incumbent_weights, sigma)
+        sigma = max(0.02, 0.20 * (0.988 ** windows_done))
 
-        baseline_games = max(2, self._window_games // 2)
-        active_games = max(2, self._window_games - baseline_games)
+        reference = dict(self._incumbent_weights)
+        candidates = [dict(reference)]
+        for _ in range(self._population_size - 1):
+            candidates.append(mutate_weights(self._rng, reference, sigma))
 
-        baseline_wins = 0
-        active_wins = 0
-        won_turns: list[int] = []
+        train_games = int(round(self._window_games * self._train_split))
+        train_games = max(2, min(self._window_games - 2, train_games))
+        eval_games = max(2, self._window_games - train_games)
 
-        for idx in range(baseline_games):
-            first_player = idx % 2
-            opponent_kind = "random" if idx % 2 == 0 else "strong"
-            baseline_weights = None if opponent_kind == "random" else normalize_weights(None)
-            result = play_strong_vs(
-                self._ruleset,
-                self._rng,
+        train_baseline = max(1, train_games // 2)
+        train_active = max(1, train_games - train_baseline)
+        eval_baseline = max(1, eval_games // 2)
+        eval_active = max(1, eval_games - eval_baseline)
+
+        normalized_league = [normalize_weights(item) for item in (league_opponents or [])]
+
+        train_metrics = self._evaluate_population(
+            windows_done=windows_done,
+            candidates=candidates,
+            reference_weights=reference,
+            league_opponents=normalized_league,
+            baseline_games=train_baseline,
+            active_games=train_active,
+            phase_tag=0,
+        )
+
+        best_index = max(range(len(candidates)), key=lambda idx: train_metrics[idx].score)
+        best_candidate = candidates[best_index]
+        best_train = train_metrics[best_index]
+
+        if best_train.score >= self._incumbent_score:
+            self._incumbent_weights = dict(best_candidate)
+            self._incumbent_score = best_train.score
+
+        eval_metrics = self._evaluate_one(
+            windows_done=windows_done,
+            candidate_index=0,
+            candidate_weights=self._incumbent_weights,
+            reference_weights=reference,
+            league_opponents=normalized_league,
+            baseline_games=eval_baseline,
+            active_games=eval_active,
+            phase_tag=1,
+        )
+
+        if eval_metrics.score >= self._best_score:
+            self._best_weights = dict(self._incumbent_weights)
+            self._best_score = eval_metrics.score
+
+        return eval_metrics
+
+    def _evaluate_population(
+        self,
+        *,
+        windows_done: int,
+        candidates: list[dict[str, float]],
+        reference_weights: dict[str, float],
+        league_opponents: list[dict[str, float]],
+        baseline_games: int,
+        active_games: int,
+        phase_tag: int,
+    ) -> list[WindowMetrics]:
+        if self._executor is None or len(candidates) == 1:
+            return [
+                self._evaluate_one(
+                    windows_done=windows_done,
+                    candidate_index=index,
+                    candidate_weights=candidate,
+                    reference_weights=reference_weights,
+                    league_opponents=league_opponents,
+                    baseline_games=baseline_games,
+                    active_games=active_games,
+                    phase_tag=phase_tag,
+                )
+                for index, candidate in enumerate(candidates)
+            ]
+
+        futures: list[concurrent.futures.Future[WindowMetrics]] = []
+        for index, candidate in enumerate(candidates):
+            request = _EvalRequest(
+                ruleset_id=self._ruleset_id,
+                seed=self._seed_for(windows_done, index, phase_tag),
                 strong_weights=candidate,
-                opponent_kind=opponent_kind,
-                opponent_weights=baseline_weights,
-                first_player=first_player,
+                reference_weights=reference_weights,
+                league_opponents=league_opponents,
+                baseline_games=baseline_games,
+                active_games=active_games,
             )
-            if result.winner == 0:
-                baseline_wins += 1
-                won_turns.append(result.shots_total)
+            futures.append(self._executor.submit(_evaluate_candidate_window, request))
 
-        resolved_league = [normalize_weights(item) for item in (league_opponents or [])]
-        for idx in range(active_games):
-            first_player = idx % 2
-            if resolved_league:
-                opponent_weights = resolved_league[idx % len(resolved_league)]
-            else:
-                opponent_weights = self._incumbent_weights
-            result = play_strong_vs(
-                self._ruleset,
-                self._rng,
-                strong_weights=candidate,
-                opponent_kind="strong",
-                opponent_weights=opponent_weights,
-                first_player=first_player,
-            )
-            if result.winner == 0:
-                active_wins += 1
-                won_turns.append(result.shots_total)
+        return [future.result() for future in futures]
 
-        wr_baseline = baseline_wins / baseline_games
-        wr_active = active_wins / active_games
-        avg_turns_win = float(sum(won_turns) / len(won_turns)) if won_turns else self._ruleset.board_size * 7.0
-        score = compute_score(wr_baseline, wr_active, avg_turns_win)
+    def _evaluate_one(
+        self,
+        *,
+        windows_done: int,
+        candidate_index: int,
+        candidate_weights: dict[str, float],
+        reference_weights: dict[str, float],
+        league_opponents: list[dict[str, float]],
+        baseline_games: int,
+        active_games: int,
+        phase_tag: int,
+    ) -> WindowMetrics:
+        request = _EvalRequest(
+            ruleset_id=self._ruleset_id,
+            seed=self._seed_for(windows_done, candidate_index, phase_tag),
+            strong_weights=candidate_weights,
+            reference_weights=reference_weights,
+            league_opponents=league_opponents,
+            baseline_games=baseline_games,
+            active_games=active_games,
+        )
+        return _evaluate_candidate_window(request)
 
-        if score >= self._incumbent_score:
-            self._incumbent_weights = dict(candidate)
-            self._incumbent_score = score
-
-        if score >= self._best_score:
-            self._best_weights = dict(candidate)
-            self._best_score = score
-
-        return WindowMetrics(
-            wr_baseline=round(wr_baseline, 6),
-            wr_active=round(wr_active, 6),
-            avg_turns_win=round(avg_turns_win, 6),
-            score=round(score, 6),
+    def _seed_for(self, windows_done: int, candidate_index: int, phase_tag: int) -> int:
+        return (
+            self._seed * 1_000_003
+            + (windows_done + 1) * 100_003
+            + candidate_index * 977
+            + phase_tag * 10_007
         )

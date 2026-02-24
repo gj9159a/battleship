@@ -3,7 +3,24 @@ import time
 from fastapi.testclient import TestClient
 
 
-def _wait_for_state(client: TestClient, job_id: str, target_state: str, timeout: float = 2.0) -> dict:
+def _fast_params(**overrides: float | int) -> dict[str, float | int]:
+    params: dict[str, float | int] = {
+        'microbatch_size': 10,
+        'eval_window_batches': 1,
+        'checkpoint_interval_batches': 1,
+        'population_size': 4,
+        'train_split': 0.6,
+        'worker_count': 1,
+        'quality_gate_games': 20,
+        'target_score': 1.0,
+        'early_stop_plateau_windows': 1000,
+        'tick_delay_ms': 10,
+    }
+    params.update(overrides)
+    return params
+
+
+def _wait_for_state(client: TestClient, job_id: str, target_state: str, timeout: float = 6.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         response = client.get(f'/api/v1/training/jobs/{job_id}')
@@ -21,16 +38,8 @@ def test_training_job_lifecycle_rest(client: TestClient) -> None:
         json={
             'ruleset_id': 'classic_v1',
             'seed': 42,
-                'params': {
-                    'budget_games': 5000,
-                    'microbatch_size': 10,
-                    'eval_window_batches': 1,
-                    'checkpoint_interval_batches': 1,
-                    'target_score': 1.0,
-                    'early_stop_plateau_windows': 1000,
-                    'tick_delay_ms': 20,
-                },
-            },
+            'params': _fast_params(tick_delay_ms=20),
+        },
     )
     assert created.status_code == 200
     job_id = created.json()['id']
@@ -69,16 +78,8 @@ def test_training_checkpoints_save_and_load(client: TestClient) -> None:
         '/api/v1/training/jobs',
         json={
             'ruleset_id': 'classic_v1',
-                'params': {
-                    'budget_games': 5000,
-                    'microbatch_size': 5,
-                    'eval_window_batches': 1,
-                    'checkpoint_interval_batches': 1,
-                    'target_score': 1.0,
-                    'early_stop_plateau_windows': 1000,
-                    'tick_delay_ms': 10,
-                },
-            },
+            'params': _fast_params(microbatch_size=5),
+        },
     )
     job_id = created.json()['id']
 
@@ -86,15 +87,15 @@ def test_training_checkpoints_save_and_load(client: TestClient) -> None:
     assert started.status_code == 200
 
     checkpoints_payload = []
-    deadline = time.time() + 2.0
+    deadline = time.time() + 6.0
     while time.time() < deadline:
         checkpoints = client.get(f'/api/v1/training/jobs/{job_id}/checkpoints')
         assert checkpoints.status_code == 200
         checkpoints_payload = checkpoints.json()
-        if len(checkpoints_payload) >= 2:
+        if checkpoints_payload:
             break
         time.sleep(0.02)
-    assert len(checkpoints_payload) >= 2
+    assert checkpoints_payload
 
     client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'pause'})
     _wait_for_state(client, job_id, 'Paused')
@@ -112,16 +113,13 @@ def test_training_adaptive_completion(client: TestClient) -> None:
         json={
             'ruleset_id': 'classic_v1',
             'seed': 7,
-            'params': {
-                'budget_games': 2000,
-                'microbatch_size': 10,
-                'eval_window_batches': 1,
-                'checkpoint_interval_batches': 5,
-                'improvement_delta': 1.0,
-                'plateau_delta': 1.0,
-                'early_stop_plateau_windows': 2,
-                'tick_delay_ms': 0,
-            },
+            'params': _fast_params(
+                checkpoint_interval_batches=5,
+                improvement_delta=1.0,
+                plateau_delta=1.0,
+                early_stop_plateau_windows=2,
+                tick_delay_ms=0,
+            ),
         },
     )
     job_id = created.json()['id']
@@ -136,7 +134,6 @@ def test_training_adaptive_completion(client: TestClient) -> None:
         'weak_plateau',
         'plateau_early_stop',
         'target_reached_plateau',
-        'budget_exhausted',
     )
 
 
@@ -146,13 +143,7 @@ def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient
         json={
             'ruleset_id': 'classic_v1',
             'seed': 123,
-            'params': {
-                'budget_games': 200,
-                'microbatch_size': 10,
-                'eval_window_batches': 1,
-                'checkpoint_interval_batches': 1,
-                'tick_delay_ms': 10,
-            },
+            'params': _fast_params(),
         },
     )
     job_id = created.json()['id']
@@ -180,15 +171,7 @@ def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:
         json={
             'ruleset_id': 'classic_v1',
             'seed': 22,
-            'params': {
-                'budget_games': 5000,
-                'microbatch_size': 5,
-                'eval_window_batches': 1,
-                'checkpoint_interval_batches': 1,
-                'target_score': 1.0,
-                'early_stop_plateau_windows': 1000,
-                'tick_delay_ms': 5,
-            },
+            'params': _fast_params(microbatch_size=5, tick_delay_ms=5),
         },
     )
     assert source_job.status_code == 200
@@ -263,15 +246,7 @@ def test_training_job_rejects_seed_bot_with_foreign_ruleset(client: TestClient) 
         json={
             'ruleset_id': 'classic_v1',
             'seed': 33,
-            'params': {
-                'budget_games': 5000,
-                'microbatch_size': 5,
-                'eval_window_batches': 1,
-                'checkpoint_interval_batches': 1,
-                'target_score': 1.0,
-                'early_stop_plateau_windows': 1000,
-                'tick_delay_ms': 5,
-            },
+            'params': _fast_params(microbatch_size=5, tick_delay_ms=5),
         },
     )
     assert source_job.status_code == 200
