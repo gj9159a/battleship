@@ -18,12 +18,12 @@ def test_training_service_checkpoint_roundtrip(tmp_path: Path) -> None:
             profile_id=None,
             seed=5,
             params=TrainingParams(
-                budget_games=200,
+                budget_games=100000,
                 microbatch_size=5,
                 eval_window_batches=1,
                 checkpoint_interval_batches=1,
                 target_score=1.0,
-                early_stop_plateau_windows=1000,
+                early_stop_plateau_windows=100000,
                 tick_delay_ms=1,
             ),
         )
