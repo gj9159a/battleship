@@ -14,6 +14,7 @@ def _fast_params(**overrides: float | int) -> dict[str, float | int]:
         'quality_gate_games': 20,
         'target_score': 1.0,
         'early_stop_plateau_windows': 1000,
+        'min_windows_before_early_stop': 1,
         'tick_delay_ms': 10,
     }
     params.update(overrides)
@@ -118,6 +119,7 @@ def test_training_adaptive_completion(client: TestClient) -> None:
                 improvement_delta=1.0,
                 plateau_delta=1.0,
                 early_stop_plateau_windows=2,
+                min_windows_before_early_stop=1,
                 tick_delay_ms=0,
             ),
         },
@@ -127,7 +129,7 @@ def test_training_adaptive_completion(client: TestClient) -> None:
     started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
     assert started.status_code == 200
 
-    completed = _wait_for_state(client, job_id, 'Completed')
+    completed = _wait_for_state(client, job_id, 'Completed', timeout=20.0)
     assert completed['stage_state'] == 'Finished'
     assert completed['stop_reason'] in (
         'strong_found_plateau',
@@ -135,6 +137,35 @@ def test_training_adaptive_completion(client: TestClient) -> None:
         'plateau_early_stop',
         'target_reached_plateau',
     )
+
+
+def test_training_early_stop_respects_min_windows_threshold(client: TestClient) -> None:
+    created = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed': 77,
+            'params': _fast_params(
+                target_score=1.0,
+                improvement_delta=1.0,
+                plateau_delta=1.0,
+                plateau_patience_windows=1000,
+                early_stop_plateau_windows=1,
+                min_windows_before_early_stop=4,
+                checkpoint_interval_batches=1000,
+                tick_delay_ms=0,
+            ),
+        },
+    )
+    assert created.status_code == 200
+    job_id = created.json()['id']
+
+    started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
+    assert started.status_code == 200
+
+    completed = _wait_for_state(client, job_id, 'Completed', timeout=20.0)
+    assert completed['stop_reason'] == 'plateau_early_stop'
+    assert completed['progress']['windows_done'] >= 4
 
 
 def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient) -> None:

@@ -18,21 +18,22 @@ import type {
 } from '../../shared/api/types';
 
 const DEFAULT_PARAMS: TrainingParamsDTO = {
-  microbatch_size: 20,
-  eval_window_batches: 1,
-  checkpoint_interval_batches: 5,
-  population_size: 16,
-  train_split: 0.65,
+  microbatch_size: 80,
+  eval_window_batches: 2,
+  checkpoint_interval_batches: 50,
+  population_size: 24,
+  train_split: 0.7,
   worker_count: 12,
-  quality_gate_games: 120,
-  quality_gate_min_winrate: 0.55,
-  quality_gate_min_lower_bound: 0.5,
-  target_score: 0.78,
-  improvement_delta: 0.01,
-  plateau_delta: 0.003,
-  plateau_patience_windows: 4,
-  early_stop_plateau_windows: 8,
-  tick_delay_ms: 10,
+  quality_gate_games: 240,
+  quality_gate_min_winrate: 0.57,
+  quality_gate_min_lower_bound: 0.53,
+  target_score: 0.8,
+  improvement_delta: 0.008,
+  plateau_delta: 0.0015,
+  plateau_patience_windows: 8,
+  early_stop_plateau_windows: 30,
+  min_windows_before_early_stop: 120,
+  tick_delay_ms: 0,
 };
 const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
@@ -438,6 +439,48 @@ export function TrainingPage() {
                 value={params.plateau_delta}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, plateau_delta: toNumber(event.target.value, prev.plateau_delta) }))
+                }
+              />
+            </label>
+
+            <label>
+              Терпение плато (окон)
+              <input
+                aria-label="Терпение плато"
+                value={params.plateau_patience_windows}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    plateau_patience_windows: toNumber(event.target.value, prev.plateau_patience_windows),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Ранний стоп: плато (окон)
+              <input
+                aria-label="Ранний стоп плато"
+                value={params.early_stop_plateau_windows}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    early_stop_plateau_windows: toNumber(event.target.value, prev.early_stop_plateau_windows),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Мин. окон до early stop
+              <input
+                aria-label="Мин. окон до early stop"
+                value={params.min_windows_before_early_stop}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    min_windows_before_early_stop: toNumber(event.target.value, prev.min_windows_before_early_stop),
+                  }))
                 }
               />
             </label>

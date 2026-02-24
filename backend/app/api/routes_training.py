@@ -43,6 +43,7 @@ def _to_response(job) -> TrainingJobResponse:
             plateau_delta=job.params.plateau_delta,
             plateau_patience_windows=job.params.plateau_patience_windows,
             early_stop_plateau_windows=job.params.early_stop_plateau_windows,
+            min_windows_before_early_stop=job.params.min_windows_before_early_stop,
             tick_delay_ms=job.params.tick_delay_ms,
         ),
         progress=TrainingProgressDTO(

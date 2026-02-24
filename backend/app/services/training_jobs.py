@@ -717,7 +717,10 @@ class TrainingJobService:
             job.stop_reason = "weak_plateau"
             return True
 
-        if job.progress.plateau_windows >= job.params.early_stop_plateau_windows:
+        if (
+            job.progress.windows_done >= job.params.min_windows_before_early_stop
+            and job.progress.plateau_windows >= job.params.early_stop_plateau_windows
+        ):
             job.stop_reason = "plateau_early_stop"
             return True
 

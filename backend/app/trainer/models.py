@@ -23,20 +23,21 @@ StageState = Literal[
 
 @dataclass(slots=True)
 class TrainingParams:
-    microbatch_size: int = 50
+    microbatch_size: int = 80
     eval_window_batches: int = 2
-    checkpoint_interval_batches: int = 5
-    population_size: int = 16
-    train_split: float = 0.65
+    checkpoint_interval_batches: int = 50
+    population_size: int = 24
+    train_split: float = 0.7
     worker_count: int = 12
-    quality_gate_games: int = 120
-    quality_gate_min_winrate: float = 0.55
-    quality_gate_min_lower_bound: float = 0.50
-    target_score: float = 0.78
-    improvement_delta: float = 0.01
-    plateau_delta: float = 0.003
-    plateau_patience_windows: int = 4
-    early_stop_plateau_windows: int = 8
+    quality_gate_games: int = 240
+    quality_gate_min_winrate: float = 0.57
+    quality_gate_min_lower_bound: float = 0.53
+    target_score: float = 0.8
+    improvement_delta: float = 0.008
+    plateau_delta: float = 0.0015
+    plateau_patience_windows: int = 8
+    early_stop_plateau_windows: int = 30
+    min_windows_before_early_stop: int = 120
     tick_delay_ms: int = 0
 
     def __post_init__(self) -> None:
@@ -52,6 +53,8 @@ class TrainingParams:
             raise ValueError("worker_count must be > 0")
         if self.quality_gate_games <= 0:
             raise ValueError("quality_gate_games must be > 0")
+        if self.min_windows_before_early_stop <= 0:
+            raise ValueError("min_windows_before_early_stop must be > 0")
         if not 0.5 <= self.train_split <= 0.9:
             raise ValueError("train_split must be in [0.5, 0.9]")
         if not 0.0 <= self.quality_gate_min_winrate <= 1.0:

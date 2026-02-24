@@ -65,6 +65,7 @@ export type TrainingParamsDTO = {
   plateau_delta: number;
   plateau_patience_windows: number;
   early_stop_plateau_windows: number;
+  min_windows_before_early_stop: number;
   tick_delay_ms: number;
 };
 
