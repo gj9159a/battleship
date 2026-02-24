@@ -8,4 +8,4 @@
 - `backend/app/api`: FastAPI routes for REST + WebSocket contracts.
 - `backend/app/schemas`: pydantic request/response contracts for API.
 - `backend/tests`: unit + golden tests for deterministic core behavior.
-- `frontend`: React + TypeScript web UI, MVP game screen via HTTP API.
+- `frontend`: React + TypeScript web UI (`Game`, `Training`, `League`) via HTTP + WS API.

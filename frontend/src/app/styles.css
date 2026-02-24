@@ -27,7 +27,7 @@ body {
 }
 
 .app-shell {
-  width: min(1160px, 94vw);
+  width: min(1220px, 94vw);
   margin: 0 auto;
   padding: 24px 0 32px;
 }
@@ -43,8 +43,30 @@ body {
   color: var(--muted);
 }
 
-.game-layout {
-  margin-top: 18px;
+.main-nav {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.nav-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: #f5fbf7;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.nav-btn-active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.game-layout,
+.screen-layout {
+  margin-top: 16px;
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 16px;
@@ -60,6 +82,13 @@ body {
 .controls {
   display: grid;
   gap: 10px;
+  align-content: start;
+}
+
+.screen-content {
+  display: grid;
+  gap: 12px;
+  align-content: start;
 }
 
 label {
@@ -69,6 +98,7 @@ label {
 }
 
 select,
+input,
 button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -89,8 +119,47 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.ghost-btn {
+  background: #edf5ef;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.mini-btn {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.advanced-grid {
+  display: grid;
+  gap: 8px;
+  background: #f7fbf8;
+  border: 1px solid #e4ece7;
+  border-radius: 8px;
+  padding: 8px;
+}
+
 .status {
   font-weight: 600;
+}
+
+.inline-summary {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid #e4ebe5;
+  width: 100%;
+  margin: 4px 0;
 }
 
 .boards {
@@ -137,6 +206,24 @@ button:disabled {
   border-color: var(--primary-strong);
 }
 
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid #e6efe8;
+  padding: 7px 6px;
+  text-align: left;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .event-list {
   margin: 0;
   padding: 0;
@@ -152,11 +239,16 @@ button:disabled {
 }
 
 @media (max-width: 980px) {
-  .game-layout {
+  .game-layout,
+  .screen-layout {
     grid-template-columns: 1fr;
   }
 
   .boards {
     grid-template-columns: 1fr;
+  }
+
+  .button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
