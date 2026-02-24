@@ -272,14 +272,49 @@ export function TrainingPage() {
       }
 
       if (event.event_type === 'training.metrics') {
+        const gamesPlayed = Number(event.payload.games_played ?? 0);
+        const batchesDone = Number(event.payload.batches_done ?? 0);
+        const windowsDone = Number(event.payload.windows_done ?? 0);
+        const score = Number(event.payload.score ?? 0);
+        const bestScore = Number(event.payload.best_score ?? 0);
+        const plateauWindows = Number(event.payload.plateau_windows ?? 0);
+        const cycleIndex = Number(event.payload.cycle_index ?? 0);
+        const strictnessLevel = Number(event.payload.strictness_level ?? 0);
+        const metaPlateauCounter = Number(event.payload.meta_plateau_counter ?? 0);
+        const championGateLcb = Number(event.payload.champion_gate_lcb ?? 0);
+        const evalProtocolHash = String(event.payload.eval_protocol_hash ?? '');
+
+        setJob((prev) => {
+          if (!prev || prev.id !== job.id) {
+            return prev;
+          }
+          return {
+            ...prev,
+            progress: {
+              ...prev.progress,
+              games_played: gamesPlayed,
+              batches_done: batchesDone,
+              windows_done: windowsDone,
+              last_score: score,
+              best_score: bestScore,
+              plateau_windows: plateauWindows,
+              cycle_index: cycleIndex,
+              strictness_level: strictnessLevel,
+              meta_plateau_counter: metaPlateauCounter,
+              champion_gate_lcb: championGateLcb,
+              eval_protocol_hash: evalProtocolHash,
+            },
+          };
+        });
+
         const point: MetricPoint = {
-          batch: Number(event.payload.batches_done ?? 0),
-          window: Number(event.payload.windows_done ?? 0),
-          score: Number(event.payload.score ?? 0),
-          best: Number(event.payload.best_score ?? 0),
-          plateau: Number(event.payload.plateau_windows ?? 0),
-          cycle: Number(event.payload.cycle_index ?? 0),
-          strictness: Number(event.payload.strictness_level ?? 0),
+          batch: batchesDone,
+          window: windowsDone,
+          score,
+          best: bestScore,
+          plateau: plateauWindows,
+          cycle: cycleIndex,
+          strictness: strictnessLevel,
         };
         upsertMetric(point, job.id);
       }

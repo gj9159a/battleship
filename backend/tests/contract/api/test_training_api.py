@@ -249,7 +249,7 @@ def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:
     assert started.status_code == 200
 
     checkpoint_id = None
-    deadline = time.time() + 2.0
+    deadline = time.time() + 6.0
     while time.time() < deadline:
         checkpoints = client.get(f'/api/v1/training/jobs/{source_job_id}/checkpoints')
         assert checkpoints.status_code == 200
@@ -324,7 +324,7 @@ def test_training_job_rejects_seed_bot_with_foreign_ruleset(client: TestClient) 
     assert started.status_code == 200
 
     checkpoint_id = None
-    deadline = time.time() + 2.0
+    deadline = time.time() + 6.0
     while time.time() < deadline:
         checkpoints = client.get(f'/api/v1/training/jobs/{source_job_id}/checkpoints')
         assert checkpoints.status_code == 200

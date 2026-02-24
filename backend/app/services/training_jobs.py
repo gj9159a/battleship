@@ -524,8 +524,9 @@ class TrainingJobService:
         wr_active: float | None = None
         avg_turns_win: float | None = None
         strictness = self._strictness_config_for_job(job)
+        needs_window_eval = (job.progress.batches_done % job.params.eval_window_batches) == 0
 
-        if job.progress.batches_done % job.params.eval_window_batches == 0:
+        if needs_window_eval:
             if runtime.simulator is None:
                 runtime.simulator = SelfPlaySimulator(
                     ruleset_id=job.ruleset_id,
@@ -538,7 +539,21 @@ class TrainingJobService:
                 )
 
             league_opponents = self._collect_top_league_opponents_locked(job, strictness)
-            metrics = runtime.simulator.next_window(job.progress.windows_done, league_opponents=league_opponents)
+            # Persist and publish immediate counters before heavy window evaluation.
+            self._persist_job_locked(job)
+            self._publish_metrics_locked(
+                job,
+                wr_baseline=None,
+                wr_active=None,
+                avg_turns_win=None,
+                window_evaluated=False,
+            )
+
+            self._lock.release()
+            try:
+                metrics = runtime.simulator.next_window(job.progress.windows_done, league_opponents=league_opponents)
+            finally:
+                self._lock.acquire()
             prev_best = job.progress.best_score
             job.progress.windows_done += 1
             job.progress.last_score = metrics.score
@@ -564,27 +579,12 @@ class TrainingJobService:
 
             self._apply_stage_transitions_locked(job)
 
-        self._event_bus.publish_sync(
-            event_type="training.metrics",
-            entity_id=job.id,
-            ruleset_id=job.ruleset_id,
-            payload={
-                "batches_done": job.progress.batches_done,
-                "games_played": job.progress.games_played,
-                "windows_done": job.progress.windows_done,
-                "wr_baseline": wr_baseline,
-                "wr_active": wr_active,
-                "avg_turns_win": avg_turns_win,
-                "score": job.progress.last_score,
-                "best_score": job.progress.best_score,
-                "plateau_windows": job.progress.plateau_windows,
-                "window_evaluated": wr_baseline is not None,
-                "cycle_index": job.progress.cycle_index,
-                "strictness_level": job.progress.strictness_level,
-                "meta_plateau_counter": job.progress.meta_plateau_counter,
-                "champion_gate_lcb": job.progress.champion_gate_lcb,
-                "eval_protocol_hash": job.progress.eval_protocol_hash,
-            },
+        self._publish_metrics_locked(
+            job,
+            wr_baseline=wr_baseline,
+            wr_active=wr_active,
+            avg_turns_win=avg_turns_win,
+            window_evaluated=wr_baseline is not None,
         )
 
         if job.progress.batches_done % job.params.checkpoint_interval_batches == 0:
@@ -612,6 +612,38 @@ class TrainingJobService:
                 },
             )
         self._persist_job_locked(job)
+
+    def _publish_metrics_locked(
+        self,
+        job: TrainingJob,
+        *,
+        wr_baseline: float | None,
+        wr_active: float | None,
+        avg_turns_win: float | None,
+        window_evaluated: bool,
+    ) -> None:
+        self._event_bus.publish_sync(
+            event_type="training.metrics",
+            entity_id=job.id,
+            ruleset_id=job.ruleset_id,
+            payload={
+                "batches_done": job.progress.batches_done,
+                "games_played": job.progress.games_played,
+                "windows_done": job.progress.windows_done,
+                "wr_baseline": wr_baseline,
+                "wr_active": wr_active,
+                "avg_turns_win": avg_turns_win,
+                "score": job.progress.last_score,
+                "best_score": job.progress.best_score,
+                "plateau_windows": job.progress.plateau_windows,
+                "window_evaluated": window_evaluated,
+                "cycle_index": job.progress.cycle_index,
+                "strictness_level": job.progress.strictness_level,
+                "meta_plateau_counter": job.progress.meta_plateau_counter,
+                "champion_gate_lcb": job.progress.champion_gate_lcb,
+                "eval_protocol_hash": job.progress.eval_protocol_hash,
+            },
+        )
 
     def _ensure_league_bootstrap_locked(self, job: TrainingJob) -> None:
         if self._bot_catalog is None or self._league_service is None:
