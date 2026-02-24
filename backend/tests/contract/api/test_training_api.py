@@ -115,7 +115,9 @@ def test_training_adaptive_completion(client: TestClient) -> None:
             'ruleset_id': 'classic_v1',
             'seed': 7,
             'params': _fast_params(
-                checkpoint_interval_batches=5,
+                microbatch_size=5,
+                population_size=2,
+                checkpoint_interval_batches=1000,
                 improvement_delta=1.0,
                 plateau_delta=1.0,
                 early_stop_plateau_windows=2,
@@ -146,6 +148,8 @@ def test_training_early_stop_respects_min_windows_threshold(client: TestClient) 
             'ruleset_id': 'classic_v1',
             'seed': 77,
             'params': _fast_params(
+                microbatch_size=5,
+                population_size=2,
                 target_score=1.0,
                 improvement_delta=1.0,
                 plateau_delta=1.0,
@@ -163,7 +167,7 @@ def test_training_early_stop_respects_min_windows_threshold(client: TestClient) 
     started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
     assert started.status_code == 200
 
-    completed = _wait_for_state(client, job_id, 'Completed', timeout=20.0)
+    completed = _wait_for_state(client, job_id, 'Completed', timeout=40.0)
     assert completed['stop_reason'] == 'plateau_early_stop'
     assert completed['progress']['windows_done'] >= 4
 

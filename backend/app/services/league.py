@@ -445,6 +445,10 @@ class LeagueService:
                     runtime = self._season_runtime[season_id]
                     if season.lifecycle_state not in {"Running", "Pausing"}:
                         break
+                    # If pause was requested at a microbatch boundary, do not start
+                    # a new match; pause should take effect immediately.
+                    if season.lifecycle_state == "Pausing" and (season.matches_done % season.microbatch_size == 0):
+                        break
                     if season.matches_done >= season.max_matches:
                         break
 
