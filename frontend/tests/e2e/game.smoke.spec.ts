@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test';
 
 test('game screen smoke', async ({ page }) => {
+  await page.route('**/api/v1/health', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ok',
+        service: 'battleship-backend',
+        ts: '2026-02-24T00:00:00+00:00',
+      }),
+    });
+  });
+
   await page.route('**/api/v1/rulesets', async (route) => {
     await route.fulfill({
       status: 200,
@@ -35,9 +47,9 @@ test('game screen smoke', async ({ page }) => {
 
   await page.goto('/');
 
-  await expect(page.getByText('Battleship')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Морской бой' })).toBeVisible();
   await expect(page.getByText('Готово к старту.')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Start Game' }).click();
+  await page.getByRole('button', { name: 'Начать игру' }).click();
   await expect(page.getByTestId('session-id')).toContainText('smoke-session');
 });
