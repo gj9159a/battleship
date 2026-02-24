@@ -20,7 +20,7 @@ def test_classic_ruleset_defaults() -> None:
     assert CLASSIC_V1.board_size == 10
     assert CLASSIC_V1.fleet == (5, 4, 3, 3, 2)
     assert CLASSIC_V1.placement_no_touch is False
-    assert CLASSIC_V1.extra_turn_on_hit is True
+    assert CLASSIC_V1.extra_turn_on_hit is False
 
 
 def test_build_board_accepts_valid_classic_fleet() -> None:

@@ -20,7 +20,7 @@ class RulesetCreateRequest(BaseModel):
     board_size: int = Field(gt=0)
     fleet: list[int] = Field(min_length=1)
     placement_no_touch: bool = False
-    extra_turn_on_hit: bool = True
+    extra_turn_on_hit: bool = False
 
 
 class RulesetCloneRequest(BaseModel):

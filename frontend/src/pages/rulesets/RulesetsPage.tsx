@@ -25,7 +25,7 @@ const EMPTY_FORM: RulesetForm = {
   boardSize: '10',
   fleet: '5,4,3,3,2',
   placementNoTouch: false,
-  extraTurnOnHit: true,
+  extraTurnOnHit: false,
 };
 
 function fleetToText(fleet: number[]): string {

@@ -11,7 +11,7 @@ SIMPLE_RULESET = Ruleset(
     board_size=5,
     fleet=(2,),
     placement_no_touch=True,
-    extra_turn_on_hit=True,
+    extra_turn_on_hit=False,
 )
 
 
@@ -21,7 +21,7 @@ def _make_game() -> BattleshipGame:
     return BattleshipGame(SIMPLE_RULESET, board_p0=board_p0, board_p1=board_p1, first_player=0)
 
 
-def test_turn_switches_on_miss_and_keeps_on_hit() -> None:
+def test_turn_switches_on_miss_and_on_hit() -> None:
     game = _make_game()
 
     r1 = game.shoot(0, 0)
@@ -30,7 +30,7 @@ def test_turn_switches_on_miss_and_keeps_on_hit() -> None:
 
     r2 = game.shoot(1, 1)
     assert r2.outcome == "hit"
-    assert r2.next_player == 1
+    assert r2.next_player == 0
 
 
 def test_game_completes_and_blocks_extra_turns() -> None:
@@ -38,6 +38,7 @@ def test_game_completes_and_blocks_extra_turns() -> None:
 
     game.shoot(0, 0)
     game.shoot(1, 1)
+    game.shoot(0, 1)
     end = game.shoot(1, 2)
 
     assert end.game_over is True

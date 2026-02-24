@@ -8,7 +8,7 @@ CLASSIC_V1 = Ruleset(
     board_size=10,
     fleet=(5, 4, 3, 3, 2),
     placement_no_touch=False,
-    extra_turn_on_hit=True,
+    extra_turn_on_hit=False,
 )
 
 _RULESETS: dict[str, Ruleset] = {
