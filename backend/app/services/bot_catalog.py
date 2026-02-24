@@ -2,6 +2,7 @@ import threading
 from dataclasses import replace
 
 from app.bots import BotVersion
+from app.bots.policy import normalize_weights
 from app.rulesets import get_ruleset
 from app.trainer import TrainingCheckpoint
 
@@ -50,6 +51,7 @@ class BotCatalogService:
         bot_version_id: str,
         ruleset_id: str,
         checkpoint: TrainingCheckpoint,
+        weights: dict[str, float],
         policy_type: str,
         feature_schema_version: str,
         lookahead_policy_version: str,
@@ -60,21 +62,13 @@ class BotCatalogService:
             if bot_version_id in self._bots:
                 raise ValueError(f"bot_version_id already exists: {bot_version_id}")
 
-            score = max(0.0, min(1.0, checkpoint.best_score))
-            batches = max(1, checkpoint.batches_done)
-            weights = {
-                "hunt_density": round(min(1.0, 0.25 + score), 4),
-                "target_focus": round(min(1.0, 0.5 + score * 0.5), 4),
-                "lookahead_pressure": round(min(1.0, 0.2 + batches / 500.0), 4),
-            }
-
             created = BotVersion(
                 bot_version_id=bot_version_id,
                 ruleset_id=ruleset_id,
                 policy_type=policy_type,
                 feature_schema_version=feature_schema_version,
                 lookahead_policy_version=lookahead_policy_version,
-                weights=weights,
+                weights=normalize_weights(weights),
                 source_job_id=checkpoint.job_id,
                 source_checkpoint_id=checkpoint.checkpoint_id,
                 tags=set(),

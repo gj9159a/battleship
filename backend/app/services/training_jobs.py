@@ -4,9 +4,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+from app.bots.policy import normalize_weights
+from app.bots.selfplay import SelfPlaySimulator
 from app.rulesets import get_ruleset
 from app.services.events import EventBus
-from app.trainer import CheckpointStore, DeterministicSimulator, TrainingCheckpoint, TrainingParams, TrainingProgress
+from app.trainer import CheckpointStore, TrainingCheckpoint, TrainingParams, TrainingProgress
 from app.trainer.models import LifecycleState, StageState
 
 
@@ -21,6 +23,8 @@ class TrainingJob:
     seed: int
     params: TrainingParams
     progress: TrainingProgress
+    current_weights: dict[str, float]
+    best_weights: dict[str, float]
     stop_reason: str | None = None
 
 
@@ -30,7 +34,7 @@ class _TrainingRuntime:
     run_gate: threading.Event = field(default_factory=threading.Event)
     pause_requested: bool = False
     stop_requested: bool = False
-    simulator: DeterministicSimulator | None = None
+    simulator: SelfPlaySimulator | None = None
 
 
 class TrainingJobService:
@@ -49,11 +53,13 @@ class TrainingJobService:
         profile_id: str | None,
         seed_bot_version_id: str | None = None,
         seed: int | None = None,
+        seed_weights: dict[str, float] | None = None,
         params: TrainingParams | None = None,
     ) -> TrainingJob:
         get_ruleset(ruleset_id)
         resolved_params = params or TrainingParams()
         resolved_seed = seed if seed is not None else 0
+        normalized_seed_weights = normalize_weights(seed_weights)
         job = TrainingJob(
             id=str(uuid4()),
             ruleset_id=ruleset_id,
@@ -64,11 +70,20 @@ class TrainingJobService:
             seed=resolved_seed,
             params=resolved_params,
             progress=TrainingProgress(),
+            current_weights=dict(normalized_seed_weights),
+            best_weights=dict(normalized_seed_weights),
         )
         with self._lock:
             self._jobs[job.id] = job
             self._checkpoints[job.id] = []
-            self._runtimes[job.id] = _TrainingRuntime(simulator=DeterministicSimulator(resolved_seed))
+            self._runtimes[job.id] = _TrainingRuntime(
+                simulator=SelfPlaySimulator(
+                    ruleset_id=ruleset_id,
+                    seed=resolved_seed,
+                    window_games=resolved_params.microbatch_size * resolved_params.eval_window_batches,
+                    seed_weights=normalized_seed_weights,
+                )
+            )
         return job
 
     def get_job(self, job_id: str) -> TrainingJob:
@@ -94,6 +109,13 @@ class TrainingJobService:
                     rows.append((job, checkpoint))
             return rows
 
+    def get_checkpoint_payload(self, job_id: str, checkpoint_id: str) -> dict:
+        with self._lock:
+            if job_id not in self._jobs:
+                raise KeyError(f"Unknown training job id={job_id}")
+            checkpoint = self._get_checkpoint_locked(job_id, checkpoint_id)
+            return self._checkpoint_store.load(checkpoint)
+
     async def load_checkpoint(self, job_id: str, checkpoint_id: str) -> TrainingJob:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -114,6 +136,16 @@ class TrainingJobService:
             job.progress.candidate_streak = 0
             stage_state = payload.get("stage_state")
             job.stage_state = stage_state if stage_state else None
+            job.current_weights = normalize_weights(payload.get("current_weights"))
+            job.best_weights = normalize_weights(payload.get("best_weights"))
+
+            runtime = self._runtimes[job.id]
+            runtime.simulator = SelfPlaySimulator(
+                ruleset_id=job.ruleset_id,
+                seed=job.seed + job.progress.windows_done,
+                window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                seed_weights=job.current_weights,
+            )
 
         self._event_bus.publish_sync(
             event_type="training.checkpoint_loaded",
@@ -295,7 +327,12 @@ class TrainingJobService:
         if job.progress.batches_done % job.params.eval_window_batches == 0:
             runtime = self._runtimes[job.id]
             if runtime.simulator is None:
-                runtime.simulator = DeterministicSimulator(job.seed)
+                runtime.simulator = SelfPlaySimulator(
+                    ruleset_id=job.ruleset_id,
+                    seed=job.seed + job.progress.windows_done,
+                    window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                    seed_weights=job.current_weights,
+                )
 
             metrics = runtime.simulator.next_window(job.progress.windows_done)
             prev_best = job.progress.best_score
@@ -330,6 +367,9 @@ class TrainingJobService:
                 },
             )
 
+            job.current_weights = runtime.simulator.current_weights
+            job.best_weights = runtime.simulator.best_weights
+
             self._apply_stage_transitions_locked(job)
 
         if job.progress.batches_done % job.params.checkpoint_interval_batches == 0:
@@ -339,6 +379,8 @@ class TrainingJobService:
                 games_played=job.progress.games_played,
                 best_score=job.progress.best_score,
                 stage_state=job.stage_state,
+                current_weights=job.current_weights,
+                best_weights=job.best_weights,
             )
             self._checkpoints[job.id].append(checkpoint)
             self._event_bus.publish_sync(

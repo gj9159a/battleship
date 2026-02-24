@@ -60,5 +60,5 @@ cargo check
 - `Bots`: промоутить checkpoints в bot versions, импортировать в лигу, выбрать seed bot
 
 ## Ограничения текущего MVP
-- Trainer использует детерминированный симулятор метрик (pipeline готов, полноценная self-play оптимизация будет следующим этапом).
+- Trainer использует реальную self-play симуляцию матчей `strong vs baseline/active` c эволюционной мутацией весов.
 - Desktop CI проверяет `cargo check`; полноценная упаковка инсталлятора пока не включена в pipeline.

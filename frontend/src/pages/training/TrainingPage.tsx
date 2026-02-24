@@ -452,7 +452,12 @@ export function TrainingPage() {
               {job.progress.best_score.toFixed(4)}
             </div>
           )}
-          {stageReason && <div className="inline-summary">Stage reason: {stageReason}</div>}
+        {stageReason && <div className="inline-summary">Stage reason: {stageReason}</div>}
+          {job && (
+            <div className="inline-summary" data-testid="training-weights-summary">
+              Best weights: {Object.entries(job.best_weights).map(([key, value]) => `${key}=${value.toFixed(3)}`).join(', ')}
+            </div>
+          )}
         </section>
 
         <section className="panel">

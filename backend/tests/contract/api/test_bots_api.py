@@ -61,6 +61,7 @@ def test_bots_from_checkpoint_and_labels(client: TestClient) -> None:
     assert payload['ruleset_id'] == 'classic_v1'
     assert payload['source_checkpoint_id'] == checkpoint['checkpoint_id']
     assert isinstance(payload['weights'], dict)
+    assert 'hunt_heat' in payload['weights']
 
     listed = client.get('/api/v1/bots?ruleset_id=classic_v1')
     assert listed.status_code == 200

@@ -17,6 +17,8 @@ class CheckpointStore:
         games_played: int,
         best_score: float,
         stage_state: str | None,
+        current_weights: dict[str, float] | None = None,
+        best_weights: dict[str, float] | None = None,
     ) -> TrainingCheckpoint:
         checkpoint_id = f"{job_id}-b{batches_done}"
         job_dir = self._root_dir / job_id
@@ -30,6 +32,8 @@ class CheckpointStore:
             "games_played": games_played,
             "best_score": best_score,
             "stage_state": stage_state,
+            "current_weights": current_weights or {},
+            "best_weights": best_weights or {},
         }
         path.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
 

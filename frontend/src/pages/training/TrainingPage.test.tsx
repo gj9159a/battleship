@@ -23,6 +23,14 @@ const JOB_IDLE = {
   seed_bot_version_id: null,
   seed: 42,
   stop_reason: null,
+  current_weights: {
+    hunt_heat: 1,
+    target_adjacent: 0.9,
+  },
+  best_weights: {
+    hunt_heat: 1,
+    target_adjacent: 0.9,
+  },
   params: {
     budget_games: 5000,
     microbatch_size: 20,

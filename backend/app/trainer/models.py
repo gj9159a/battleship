@@ -68,3 +68,6 @@ class TrainingCheckpoint:
     games_played: int
     best_score: float
     stage_state: str | None
+
+
+TrainingWeights = dict[str, float]

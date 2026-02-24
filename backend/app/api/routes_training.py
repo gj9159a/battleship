@@ -26,6 +26,8 @@ def _to_response(job) -> TrainingJobResponse:
         seed_bot_version_id=job.seed_bot_version_id,
         seed=job.seed,
         stop_reason=job.stop_reason,
+        current_weights=dict(job.current_weights),
+        best_weights=dict(job.best_weights),
         params=TrainingParamsDTO(
             budget_games=job.params.budget_games,
             microbatch_size=job.params.microbatch_size,
@@ -56,12 +58,14 @@ async def create_training_job(
     bot_catalog: BotCatalogService = Depends(get_bot_catalog),
 ) -> TrainingJobResponse:
     try:
+        seed_weights = None
         if payload.seed_bot_version_id:
             seed_bot = bot_catalog.get_bot(payload.seed_bot_version_id)
             if seed_bot.ruleset_id != payload.ruleset_id:
                 raise ValueError(
                     f"seed_bot_version_id ruleset mismatch: {seed_bot.ruleset_id} != {payload.ruleset_id}"
                 )
+            seed_weights = dict(seed_bot.weights)
 
         params = TrainingParams(**payload.params.model_dump()) if payload.params else TrainingParams()
         job = training_jobs.create_job(
@@ -69,6 +73,7 @@ async def create_training_job(
             payload.profile_id,
             payload.seed_bot_version_id,
             payload.seed,
+            seed_weights=seed_weights,
             params=params,
         )
     except KeyError as exc:

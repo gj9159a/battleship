@@ -87,12 +87,23 @@ async def create_bot_from_checkpoint(
         )
 
     bot_version_id = payload.bot_version_id or f"{job.ruleset_id}-{payload.checkpoint_id}"
+    try:
+        checkpoint_payload = training_jobs.get_checkpoint_payload(payload.job_id, payload.checkpoint_id)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
+    if not weights:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Checkpoint {payload.checkpoint_id} has no weights payload",
+        )
 
     try:
         created = bot_catalog.create_from_checkpoint(
             bot_version_id=bot_version_id,
             ruleset_id=job.ruleset_id,
             checkpoint=checkpoint,
+            weights=weights,
             policy_type=payload.policy_type,
             feature_schema_version=payload.feature_schema_version,
             lookahead_policy_version=payload.lookahead_policy_version,

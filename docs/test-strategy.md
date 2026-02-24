@@ -4,7 +4,7 @@
 - Golden scenarios for deterministic fixed sequences.
 - Contract tests for `api`: REST routes (`rulesets`, `game sessions`, `training jobs`) + WS event smoke.
 - Trainer tests:
-- unit (`simulator` determinism, checkpoint save/load).
+- unit (`self-play simulator` determinism with fixed seed, checkpoint save/load incl. weights).
 - integration (`training service <-> checkpoint storage`, pause/resume/stop flow).
 - League tests:
 - unit (`TrueSkill` update, `mu-3*sigma` sorting, top-16/active/baseline logic, ruleset isolation).

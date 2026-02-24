@@ -175,6 +175,8 @@ class TrainingJobResponse(BaseModel):
     seed_bot_version_id: str | None
     seed: int | None
     stop_reason: str | None
+    current_weights: dict[str, float]
+    best_weights: dict[str, float]
     params: TrainingParamsDTO
     progress: TrainingProgressDTO
 

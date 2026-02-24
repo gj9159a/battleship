@@ -81,6 +81,8 @@ export type TrainingJobDTO = {
   seed_bot_version_id: string | null;
   seed: number | null;
   stop_reason: string | null;
+  current_weights: Record<string, number>;
+  best_weights: Record<string, number>;
   params: TrainingParamsDTO;
   progress: TrainingProgressDTO;
 };
