@@ -7,6 +7,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   delete window.__TAURI__;
+  delete window.__TAURI_INTERNALS__;
 });
 
 describe('BackendStatusBar', () => {
@@ -25,8 +26,8 @@ describe('BackendStatusBar', () => {
     render(<BackendStatusBar />);
 
     await waitFor(() => {
-      expect(screen.getByText('Backend: online')).toBeInTheDocument();
-      expect(screen.getByText('Mode: web')).toBeInTheDocument();
+      expect(screen.getByText('Бэкенд: онлайн')).toBeInTheDocument();
+      expect(screen.getByText('Режим: веб')).toBeInTheDocument();
     });
   });
 
@@ -55,21 +56,39 @@ describe('BackendStatusBar', () => {
     render(<BackendStatusBar />);
 
     await waitFor(() => {
-      expect(screen.getByText('Mode: desktop')).toBeInTheDocument();
-      expect(screen.getByText('Backend: offline')).toBeInTheDocument();
+      expect(screen.getByText('Режим: десктоп')).toBeInTheDocument();
+      expect(screen.getByText('Бэкенд: оффлайн')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start backend' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Запустить бэкенд' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Backend: online')).toBeInTheDocument();
-      expect(screen.getByText('Mode: desktop | pid 4242')).toBeInTheDocument();
+      expect(screen.getByText('Бэкенд: онлайн')).toBeInTheDocument();
+      expect(screen.getByText('Режим: десктоп | pid 4242')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop backend' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Остановить бэкенд' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Backend: offline')).toBeInTheDocument();
+      expect(screen.getByText('Бэкенд: оффлайн')).toBeInTheDocument();
+    });
+  });
+
+  it('detects desktop mode via __TAURI_INTERNALS__ bridge', async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async (command: string) => {
+        if (command === 'backend_status') {
+          return { running: false, pid: null, last_error: null };
+        }
+        throw new Error(`Unknown command ${command}`);
+      }),
+    };
+
+    render(<BackendStatusBar />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Режим: десктоп')).toBeInTheDocument();
+      expect(screen.getByText('Бэкенд: оффлайн')).toBeInTheDocument();
     });
   });
 });

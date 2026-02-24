@@ -54,25 +54,25 @@ describe('RulesetsPage', () => {
     render(<RulesetsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Готово к управлению rulesets.')).toBeInTheDocument();
+      expect(screen.getByText('Готово к управлению профилями правил.')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'New ruleset form' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Новая форма профиля' }));
 
-    fireEvent.change(screen.getByLabelText('Ruleset id'), { target: { value: 'dense_v2' } });
-    fireEvent.change(screen.getByLabelText('Ruleset name'), { target: { value: 'Dense v2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    fireEvent.change(screen.getByLabelText('ID профиля правил'), { target: { value: 'dense_v2' } });
+    fireEvent.change(screen.getByLabelText('Название профиля правил'), { target: { value: 'Dense v2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Создать' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('rulesets-table')).toHaveTextContent('dense_v2');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Activate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Активировать' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('rulesets-status-text')).toHaveTextContent('активирован');
       expect(screen.getByTestId('rulesets-table')).toHaveTextContent('dense_v2');
-      expect(screen.getByTestId('rulesets-table')).toHaveTextContent('active');
+      expect(screen.getByTestId('rulesets-table')).toHaveTextContent('активен');
     });
   });
 });

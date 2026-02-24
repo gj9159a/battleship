@@ -100,7 +100,7 @@ describe('TrainingPage', () => {
       expect(screen.getByText('Готово к запуску тренировки.')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start training' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Запустить тренировку' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('training-job-id')).toHaveTextContent('job-1');

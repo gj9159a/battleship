@@ -39,7 +39,7 @@ export function LeaguePage() {
   const [maxMatchesInput, setMaxMatchesInput] = useState('500');
   const [microbatchInput, setMicrobatchInput] = useState('10');
 
-  const [statusText, setStatusText] = useState('Загрузка rulesets...');
+  const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [eventLines, setEventLines] = useState<string[]>([]);
@@ -60,7 +60,7 @@ export function LeaguePage() {
       .catch((error: Error) => {
         if (mounted) {
           setErrorText(error.message);
-          setStatusText('Не удалось загрузить rulesets.');
+          setStatusText('Не удалось загрузить профили правил.');
         }
       });
 
@@ -157,7 +157,7 @@ export function LeaguePage() {
     try {
       await registerLeagueBot(selectedRulesetId, botVersionId.trim(), poolType);
       await refreshLeagueData(selectedRulesetId);
-      setStatusText(`Бот ${botVersionId} добавлен в pool ${poolType}.`);
+      setStatusText(`Бот ${botVersionId} добавлен в пул ${poolType}.`);
       setBotVersionId('');
     } catch (error) {
       setErrorText((error as Error).message);
@@ -183,7 +183,7 @@ export function LeaguePage() {
         microbatch_size: toNumber(microbatchInput, 10),
       });
       setSeason(created);
-      setStatusText(`Season ${created.id} создан.`);
+      setStatusText(`Сезон ${created.id} создан.`);
     } catch (error) {
       setErrorText((error as Error).message);
       setStatusText('Ошибка создания сезона.');
@@ -203,7 +203,7 @@ export function LeaguePage() {
     try {
       const updated = await commandLeagueSeason(season.id, command);
       setSeason(updated);
-      setStatusText(`Команда ${command} отправлена для season ${season.id}.`);
+      setStatusText(`Команда ${command} отправлена для сезона ${season.id}.`);
     } catch (error) {
       setErrorText((error as Error).message);
       setStatusText(`Ошибка команды ${command}.`);
@@ -228,10 +228,10 @@ export function LeaguePage() {
         winner_id: table[0].bot_version_id,
       });
       await refreshLeagueData(selectedRulesetId);
-      setStatusText('Quick match сыгран.');
+      setStatusText('Быстрый матч сыгран.');
     } catch (error) {
       setErrorText((error as Error).message);
-      setStatusText('Ошибка quick match.');
+      setStatusText('Ошибка быстрого матча.');
     } finally {
       setIsBusy(false);
     }
@@ -240,10 +240,10 @@ export function LeaguePage() {
   return (
     <section className="screen-layout">
       <aside className="panel controls">
-        <h2>League</h2>
+        <h2>Лига</h2>
 
         <label>
-          Ruleset
+          Профиль правил
           <select value={selectedRulesetId} onChange={(event) => setSelectedRulesetId(event.target.value)}>
             {rulesets.map((item) => (
               <option key={item.id} value={item.id}>
@@ -254,9 +254,9 @@ export function LeaguePage() {
         </label>
 
         <label>
-          Bot version id
+          ID версии бота
           <input
-            aria-label="Bot version id"
+            aria-label="ID версии бота"
             value={botVersionId}
             onChange={(event) => setBotVersionId(event.target.value)}
             placeholder="candidate-001"
@@ -264,56 +264,56 @@ export function LeaguePage() {
         </label>
 
         <label>
-          Pool
+          Пул
           <select value={poolType} onChange={(event) => setPoolType(event.target.value as LeaguePoolType)}>
-            <option value="active">active</option>
-            <option value="baseline">baseline</option>
-            <option value="league">league</option>
+            <option value="active">active (кандидаты)</option>
+            <option value="baseline">baseline (базовые)</option>
+            <option value="league">league (лига)</option>
           </select>
         </label>
 
         <button type="button" onClick={onRegisterBot} disabled={isBusy || !botVersionId.trim()}>
-          Register bot
+          Зарегистрировать бота
         </button>
 
         <hr className="divider" />
 
         <label>
-          Season seed
+          Seed сезона
           <input value={seedInput} onChange={(event) => setSeedInput(event.target.value)} />
         </label>
 
         <label>
-          Max matches
+          Макс. матчей
           <input value={maxMatchesInput} onChange={(event) => setMaxMatchesInput(event.target.value)} />
         </label>
 
         <label>
-          Microbatch
+          Микробатч
           <input value={microbatchInput} onChange={(event) => setMicrobatchInput(event.target.value)} />
         </label>
 
         <button type="button" onClick={onCreateSeason} disabled={isBusy}>
-          Create season
+          Создать сезон
         </button>
 
         <div className="button-row">
           <button type="button" onClick={() => onCommandSeason('start')} disabled={isBusy || !season || season.lifecycle_state !== 'Idle'}>
-            Start
+            Старт
           </button>
           <button type="button" onClick={() => onCommandSeason('pause')} disabled={!canPause || isBusy}>
-            Pause
+            Пауза
           </button>
           <button type="button" onClick={() => onCommandSeason('resume')} disabled={!canResume || isBusy}>
-            Resume
+            Продолжить
           </button>
           <button type="button" onClick={() => onCommandSeason('stop')} disabled={!canStop || isBusy}>
-            Stop
+            Стоп
           </button>
         </div>
 
         <button type="button" onClick={onQuickMatch} disabled={isBusy || table.length < 2}>
-          Quick match top-2
+          Быстрый матч top-2
         </button>
 
         <div className="status" data-testid="league-status-text">
@@ -322,13 +322,13 @@ export function LeaguePage() {
 
         {season && (
           <div data-testid="league-season-id">
-            Season: {season.id}
+            Сезон: {season.id}
             <br />
-            Lifecycle: {season.lifecycle_state}
+            Жизненный цикл: {season.lifecycle_state}
             <br />
-            Matches done: {season.matches_done}/{season.max_matches}
+            Матчей сыграно: {season.matches_done}/{season.max_matches}
             <br />
-            Stop reason: {season.stop_reason ?? '-'}
+            Причина остановки: {season.stop_reason ?? '-'}
           </div>
         )}
 
@@ -337,17 +337,17 @@ export function LeaguePage() {
 
       <div className="screen-content">
         <section className="panel">
-          <h3>Top-16 (by mu-3*sigma)</h3>
+          <h3>Топ-16 (по mu-3*sigma)</h3>
           <table className="data-table" data-testid="league-table">
             <thead>
               <tr>
-                <th>Bot</th>
-                <th>Pool</th>
+                <th>Бот</th>
+                <th>Пул</th>
                 <th>mu</th>
                 <th>sigma</th>
                 <th>mu-3σ</th>
-                <th>Matches</th>
-                <th>Winrate</th>
+                <th>Матчи</th>
+                <th>Винрейт</th>
               </tr>
             </thead>
             <tbody>
@@ -367,15 +367,15 @@ export function LeaguePage() {
         </section>
 
         <section className="panel">
-          <h3>Matchup matrix</h3>
+          <h3>Матрица матчапов</h3>
           <table className="data-table" data-testid="league-matrix-table">
             <thead>
               <tr>
-                <th>Bot A</th>
-                <th>Bot B</th>
-                <th>A wins</th>
-                <th>B wins</th>
-                <th>Total</th>
+                <th>Бот A</th>
+                <th>Бот B</th>
+                <th>Побед A</th>
+                <th>Побед B</th>
+                <th>Всего</th>
               </tr>
             </thead>
             <tbody>
@@ -393,7 +393,7 @@ export function LeaguePage() {
         </section>
 
         <section className="panel">
-          <h3>Events</h3>
+          <h3>События</h3>
           <ul className="event-list" data-testid="league-events-list">
             {eventLines.map((line, index) => (
               <li key={`${line}-${index}`}>{line}</li>

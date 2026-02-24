@@ -88,8 +88,8 @@ describe('LeaguePage', () => {
       expect(screen.getByText('Готово к работе с лигой.')).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByLabelText('Bot version id'), { target: { value: 'candidate-001' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Register bot' }));
+    fireEvent.change(screen.getByLabelText('ID версии бота'), { target: { value: 'candidate-001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Зарегистрировать бота' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('league-table')).toHaveTextContent('candidate-001');

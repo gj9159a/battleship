@@ -57,7 +57,7 @@ export function TrainingPage() {
   const [eventLines, setEventLines] = useState<string[]>([]);
   const [stageReason, setStageReason] = useState<string>('');
 
-  const [statusText, setStatusText] = useState('Загрузка rulesets...');
+  const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -84,7 +84,7 @@ export function TrainingPage() {
       .catch((error: Error) => {
         if (mounted) {
           setErrorText(error.message);
-          setStatusText('Не удалось загрузить rulesets.');
+          setStatusText('Не удалось загрузить профили правил.');
         }
       });
 
@@ -201,7 +201,7 @@ export function TrainingPage() {
       const started = await commandTrainingJob(created.id, 'start');
       setJob(started);
       await refreshCheckpoints(started.id);
-      setStatusText(`Training running (${started.id}).`);
+      setStatusText(`Тренировка запущена (${started.id}).`);
     } catch (error) {
       setErrorText((error as Error).message);
       setStatusText('Ошибка запуска тренировки.');
@@ -239,10 +239,10 @@ export function TrainingPage() {
     try {
       const loaded = await loadTrainingCheckpoint(job.id, checkpointId);
       setJob(loaded);
-      setStatusText(`Checkpoint ${checkpointId} загружен.`);
+      setStatusText(`Чекпоинт ${checkpointId} загружен.`);
     } catch (error) {
       setErrorText((error as Error).message);
-      setStatusText('Ошибка загрузки checkpoint.');
+      setStatusText('Ошибка загрузки чекпоинта.');
     } finally {
       setIsBusy(false);
     }
@@ -251,10 +251,10 @@ export function TrainingPage() {
   return (
     <section className="screen-layout">
       <aside className="panel controls">
-        <h2>Training</h2>
+        <h2>Тренировка</h2>
 
         <label>
-          Ruleset
+          Профиль правил
           <select value={selectedRulesetId} onChange={(event) => setSelectedRulesetId(event.target.value)}>
             {rulesets.map((item) => (
               <option key={item.id} value={item.id}>
@@ -265,9 +265,9 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Seed bot version (optional)
+          Seed-бот (опционально)
           <input
-            aria-label="Seed bot version"
+            aria-label="Seed-бот"
             value={seedBotVersionId}
             onChange={(event) => setSeedBotVersionId(event.target.value)}
             disabled={isBusy}
@@ -275,9 +275,9 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Seed
+          Сид
           <input
-            aria-label="Seed"
+            aria-label="Сид"
             value={seedInput}
             onChange={(event) => setSeedInput(event.target.value)}
             disabled={isBusy}
@@ -285,18 +285,18 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Budget games
+          Лимит игр
           <input
-            aria-label="Budget games"
+            aria-label="Лимит игр"
             value={params.budget_games}
             onChange={(event) => setParams((prev) => ({ ...prev, budget_games: toNumber(event.target.value, prev.budget_games) }))}
           />
         </label>
 
         <label>
-          Microbatch
+          Микробатч
           <input
-            aria-label="Microbatch"
+            aria-label="Микробатч"
             value={params.microbatch_size}
             onChange={(event) =>
               setParams((prev) => ({ ...prev, microbatch_size: toNumber(event.target.value, prev.microbatch_size) }))
@@ -305,9 +305,9 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Eval window
+          Окно оценки
           <input
-            aria-label="Eval window"
+            aria-label="Окно оценки"
             value={params.eval_window_batches}
             onChange={(event) =>
               setParams((prev) => ({ ...prev, eval_window_batches: toNumber(event.target.value, prev.eval_window_batches) }))
@@ -316,9 +316,9 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Checkpoint interval
+          Интервал чекпоинтов
           <input
-            aria-label="Checkpoint interval"
+            aria-label="Интервал чекпоинтов"
             value={params.checkpoint_interval_batches}
             onChange={(event) =>
               setParams((prev) => ({
@@ -330,15 +330,15 @@ export function TrainingPage() {
         </label>
 
         <button type="button" className="ghost-btn" onClick={() => setShowAdvanced((prev) => !prev)}>
-          {showAdvanced ? 'Hide advanced' : 'Show advanced'}
+          {showAdvanced ? 'Скрыть расширенные настройки' : 'Показать расширенные настройки'}
         </button>
 
         {showAdvanced && (
           <div className="advanced-grid">
             <label>
-              Target score
+              Целевой score
               <input
-                aria-label="Target score"
+                aria-label="Целевой score"
                 value={params.target_score}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, target_score: toNumber(event.target.value, prev.target_score) }))
@@ -347,9 +347,9 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Improvement delta
+              Порог улучшения
               <input
-                aria-label="Improvement delta"
+                aria-label="Порог улучшения"
                 value={params.improvement_delta}
                 onChange={(event) =>
                   setParams((prev) => ({
@@ -361,9 +361,9 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Plateau delta
+              Порог плато
               <input
-                aria-label="Plateau delta"
+                aria-label="Порог плато"
                 value={params.plateau_delta}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, plateau_delta: toNumber(event.target.value, prev.plateau_delta) }))
@@ -372,9 +372,9 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Tick delay ms
+              Задержка тика, мс
               <input
-                aria-label="Tick delay"
+                aria-label="Задержка тика"
                 value={params.tick_delay_ms}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, tick_delay_ms: toNumber(event.target.value, prev.tick_delay_ms) }))
@@ -386,36 +386,36 @@ export function TrainingPage() {
 
         <div className="button-row">
           <button type="button" onClick={onStartTraining} disabled={isBusy || rulesets.length === 0}>
-            Start training
+            Запустить тренировку
           </button>
           <button type="button" onClick={() => onCommand('pause')} disabled={!canPause || isBusy}>
-            Pause
+            Пауза
           </button>
           <button type="button" onClick={() => onCommand('resume')} disabled={!canResume || isBusy}>
-            Resume
+            Продолжить
           </button>
           <button type="button" onClick={() => onCommand('stop')} disabled={!canStop || isBusy}>
-            Stop
+            Стоп
           </button>
         </div>
 
         <div className="status" data-testid="training-status-text">
           {statusText}
         </div>
-        <div>Lookahead: Adaptive</div>
-        <div>Policy: adaptive_v1</div>
+        <div>Лукахед: адаптивный</div>
+        <div>Политика: adaptive_v1</div>
 
         {job && (
           <div data-testid="training-job-id">
-            Job: {job.id}
+            Джоб: {job.id}
             <br />
-            Lifecycle: {job.lifecycle_state}
+            Жизненный цикл: {job.lifecycle_state}
             <br />
-            Stage: {job.stage_state ?? '-'}
+            Стадия: {job.stage_state ?? '-'}
             <br />
-            Seed bot: {job.seed_bot_version_id ?? '-'}
+            Seed-бот: {job.seed_bot_version_id ?? '-'}
             <br />
-            Stop reason: {job.stop_reason ?? '-'}
+            Причина остановки: {job.stop_reason ?? '-'}
           </div>
         )}
 
@@ -424,15 +424,15 @@ export function TrainingPage() {
 
       <div className="screen-content">
         <section className="panel">
-          <h3>Live Metrics</h3>
+          <h3>Метрики в реальном времени</h3>
           <table className="data-table" data-testid="training-metrics-table">
             <thead>
-              <tr>
-                <th>Window</th>
-                <th>Score</th>
-                <th>Best</th>
-                <th>Plateau</th>
-              </tr>
+                <tr>
+                  <th>Окно</th>
+                  <th>Счёт</th>
+                  <th>Лучший</th>
+                  <th>Плато</th>
+                </tr>
             </thead>
             <tbody>
               {latestMetrics.map((point) => (
@@ -448,28 +448,28 @@ export function TrainingPage() {
 
           {job && (
             <div className="inline-summary">
-              Games: {job.progress.games_played} | Batches: {job.progress.batches_done} | Best:{' '}
+              Игры: {job.progress.games_played} | Батчи: {job.progress.batches_done} | Лучший:{' '}
               {job.progress.best_score.toFixed(4)}
             </div>
           )}
-        {stageReason && <div className="inline-summary">Stage reason: {stageReason}</div>}
+          {stageReason && <div className="inline-summary">Причина смены стадии: {stageReason}</div>}
           {job && (
             <div className="inline-summary" data-testid="training-weights-summary">
-              Best weights: {Object.entries(job.best_weights).map(([key, value]) => `${key}=${value.toFixed(3)}`).join(', ')}
+              Лучшие веса: {Object.entries(job.best_weights).map(([key, value]) => `${key}=${value.toFixed(3)}`).join(', ')}
             </div>
           )}
         </section>
 
         <section className="panel">
-          <h3>Checkpoints</h3>
+          <h3>Чекпоинты</h3>
           <table className="data-table" data-testid="training-checkpoints-table">
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Batches</th>
-                <th>Games</th>
-                <th>Best</th>
-                <th>Action</th>
+                <th>Батчи</th>
+                <th>Игры</th>
+                <th>Лучший</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>
@@ -486,7 +486,7 @@ export function TrainingPage() {
                       onClick={() => onLoadCheckpoint(checkpoint.checkpoint_id)}
                       disabled={isBusy || !job || ['Running', 'Pausing', 'Stopping'].includes(job.lifecycle_state)}
                     >
-                      Load
+                      Загрузить
                     </button>
                   </td>
                 </tr>
@@ -496,7 +496,7 @@ export function TrainingPage() {
         </section>
 
         <section className="panel">
-          <h3>Events</h3>
+          <h3>События</h3>
           <ul className="event-list" data-testid="training-events-list">
             {eventLines.map((line, index) => (
               <li key={`${line}-${index}`}>{line}</li>

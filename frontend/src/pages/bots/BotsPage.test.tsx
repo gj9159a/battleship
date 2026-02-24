@@ -107,22 +107,22 @@ describe('BotsPage', () => {
     render(<BotsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Готово к работе с bots/checkpoints.')).toBeInTheDocument();
+      expect(screen.getByText('Готово к работе с ботами и чекпоинтами.')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Promote to bot' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Преобразовать в бота' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('bots-table')).toHaveTextContent('classic_v1-job-1-b1');
     });
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Import to league' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Импорт в лигу' })[0]);
 
     await waitFor(() => {
-      expect(screen.getByTestId('bots-status-text')).toHaveTextContent('imported to league');
+      expect(screen.getByTestId('bots-status-text')).toHaveTextContent('импортирован в пул лиги');
     });
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Use as seed' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Выбрать как seed' })[0]);
 
     expect(window.localStorage.getItem('training.seed_bot_version_id')).toBe('classic_v1-job-1-b1');
     expect(screen.getByTestId('bots-seed-selection')).toHaveTextContent('classic_v1-job-1-b1');

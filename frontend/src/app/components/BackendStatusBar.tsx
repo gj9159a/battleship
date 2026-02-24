@@ -21,7 +21,7 @@ async function probe(mode: Mode): Promise<HealthState> {
   if (mode === 'desktop') {
     const status = await desktopBackendStatus();
     if (!status) {
-      return { online: false, mode, pid: null, error: 'desktop bridge unavailable' };
+      return { online: false, mode, pid: null, error: 'Мост десктоп недоступен' };
     }
     return { online: status.running, mode, pid: status.pid, error: status.last_error };
   }
@@ -85,19 +85,19 @@ export function BackendStatusBar() {
   return (
     <div className="backend-bar" data-testid="backend-status-bar">
       <span className={state.online ? 'backend-pill backend-pill-online' : 'backend-pill backend-pill-offline'}>
-        Backend: {state.online ? 'online' : 'offline'}
+        Бэкенд: {state.online ? 'онлайн' : 'оффлайн'}
       </span>
       <span className="backend-meta">
-        Mode: {mode}
+        Режим: {mode === 'desktop' ? 'десктоп' : 'веб'}
         {state.pid ? ` | pid ${state.pid}` : ''}
       </span>
       {mode === 'desktop' && (
         <div className="backend-actions">
           <button type="button" className="mini-btn" onClick={onStart} disabled={busy || state.online}>
-            Start backend
+            Запустить бэкенд
           </button>
           <button type="button" className="mini-btn" onClick={onStop} disabled={busy || !state.online}>
-            Stop backend
+            Остановить бэкенд
           </button>
         </div>
       )}

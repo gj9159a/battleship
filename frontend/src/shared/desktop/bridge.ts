@@ -6,12 +6,26 @@ export type DesktopBackendStatus = {
 
 type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
+type TauriGlobals = {
+  __TAURI__?: {
+    core?: {
+      invoke?: TauriInvoke;
+    };
+  };
+  __TAURI_INTERNALS__?: {
+    invoke?: TauriInvoke;
+  };
+};
+
 function getInvoke(): TauriInvoke | null {
-  const api = window.__TAURI__;
-  if (!api || !api.core || typeof api.core.invoke !== 'function') {
-    return null;
+  const globals = window as TauriGlobals;
+  if (globals.__TAURI__?.core?.invoke && typeof globals.__TAURI__.core.invoke === 'function') {
+    return globals.__TAURI__.core.invoke;
   }
-  return api.core.invoke as TauriInvoke;
+  if (globals.__TAURI_INTERNALS__?.invoke && typeof globals.__TAURI_INTERNALS__.invoke === 'function') {
+    return globals.__TAURI_INTERNALS__.invoke;
+  }
+  return null;
 }
 
 export function isDesktopRuntime(): boolean {

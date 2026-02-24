@@ -12,7 +12,7 @@ export function GamePage() {
   const [rulesets, setRulesets] = useState<RulesetDTO[]>([]);
   const [selectedRulesetId, setSelectedRulesetId] = useState('classic_v1');
   const [session, setSession] = useState<GameSessionDTO | null>(null);
-  const [statusText, setStatusText] = useState('Загрузка rulesets...');
+  const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [isBusy, setIsBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [botCursor, setBotCursor] = useState(0);
@@ -33,7 +33,7 @@ export function GamePage() {
       .catch((error: Error) => {
         if (mounted) {
           setErrorText(error.message);
-          setStatusText('Не удалось загрузить rulesets.');
+          setStatusText('Не удалось загрузить профили правил.');
         }
       });
 
@@ -155,9 +155,9 @@ export function GamePage() {
     <section className="game-layout">
       <aside className="panel controls">
         <label>
-          Ruleset
+          Профиль правил
           <select
-            aria-label="Ruleset"
+            aria-label="Профиль правил"
             value={selectedRulesetId}
             onChange={(event) => setSelectedRulesetId(event.target.value)}
             disabled={isBusy}
@@ -171,19 +171,19 @@ export function GamePage() {
         </label>
 
         <button type="button" onClick={onStartGame} disabled={isBusy || rulesets.length === 0}>
-          Start Game
+          Начать игру
         </button>
 
         <div className="status" data-testid="status-text">
           {statusText}
         </div>
 
-        {session && <div data-testid="session-id">Session: {session.id}</div>}
+        {session && <div data-testid="session-id">Сессия: {session.id}</div>}
 
         {errorText && <div role="alert">{errorText}</div>}
 
         <div>
-          <h3>Events</h3>
+          <h3>События</h3>
           <ul className="event-list" data-testid="events-list">
             {(session?.shots ?? []).map((shot, index) => (
               <li key={`${shot.shooter}-${shot.target}-${shot.row}-${shot.col}-${index}`}>
@@ -196,7 +196,7 @@ export function GamePage() {
 
       <div className="boards">
         <section className="panel">
-          <h3>Player board</h3>
+          <h3>Поле игрока</h3>
           <div className="board" data-testid="player-board">
             {Array.from({ length: 10 * 10 }).map((_, idx) => {
               const row = Math.floor(idx / 10);
@@ -217,7 +217,7 @@ export function GamePage() {
         </section>
 
         <section className="panel">
-          <h3>Enemy board</h3>
+          <h3>Поле противника</h3>
           <div className="board" data-testid="enemy-board">
             {Array.from({ length: 10 * 10 }).map((_, idx) => {
               const row = Math.floor(idx / 10);
@@ -239,7 +239,7 @@ export function GamePage() {
                   className={classes.join(' ')}
                   onClick={() => onPlayerShot(row, col)}
                   disabled={!isPlayerTurn || Boolean(shot) || isBusy}
-                  aria-label={`enemy-cell-${row}-${col}`}
+                  aria-label={`клетка-противника-${row}-${col}`}
                 />
               );
             })}

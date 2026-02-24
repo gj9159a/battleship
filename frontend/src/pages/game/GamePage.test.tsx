@@ -62,10 +62,10 @@ describe('GamePage', () => {
       expect(screen.getByText('Готово к старту.')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start Game' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Начать игру' }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('session-id')).toHaveTextContent('Session: session-1');
+      expect(screen.getByTestId('session-id')).toHaveTextContent('Сессия: session-1');
     });
 
     expect(fetchMock).toHaveBeenCalled();

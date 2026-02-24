@@ -40,7 +40,7 @@ function parseFleet(input: string): number[] {
     .map((item) => Number(item));
 
   if (parts.length === 0 || parts.some((value) => !Number.isInteger(value) || value <= 0)) {
-    throw new Error('Fleet format must be comma-separated positive integers, e.g. 5,4,3,3,2');
+    throw new Error('Флот должен быть задан через запятую: только положительные целые, например 5,4,3,3,2');
   }
 
   return parts;
@@ -64,7 +64,7 @@ export function RulesetsPage() {
   const [cloneId, setCloneId] = useState('');
   const [cloneName, setCloneName] = useState('');
 
-  const [statusText, setStatusText] = useState('Загрузка rulesets...');
+  const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -112,13 +112,13 @@ export function RulesetsPage() {
     refreshRulesets()
       .then(() => {
         if (mounted) {
-          setStatusText('Готово к управлению rulesets.');
+          setStatusText('Готово к управлению профилями правил.');
         }
       })
       .catch((error: Error) => {
         if (mounted) {
           setErrorText(error.message);
-          setStatusText('Не удалось загрузить rulesets.');
+          setStatusText('Не удалось загрузить профили правил.');
         }
       });
 
@@ -156,7 +156,7 @@ export function RulesetsPage() {
         extra_turn_on_hit: form.extraTurnOnHit,
       };
       await createRuleset(payload);
-      setStatusText(`Ruleset ${payload.id} создан.`); 
+      setStatusText(`Профиль правил ${payload.id} создан.`);
       setSelectedId(payload.id);
       await refreshRulesets(payload.id);
     });
@@ -177,7 +177,7 @@ export function RulesetsPage() {
       };
 
       await updateRuleset(selectedRuleset.id, payload);
-      setStatusText(`Ruleset ${selectedRuleset.id} обновлён.`);
+      setStatusText(`Профиль правил ${selectedRuleset.id} обновлён.`);
       await refreshRulesets();
     });
   }
@@ -191,7 +191,7 @@ export function RulesetsPage() {
       const newId = cloneId.trim();
       const newName = cloneName.trim();
       await cloneRuleset(selectedRuleset.id, { new_id: newId, new_name: newName });
-      setStatusText(`Ruleset ${selectedRuleset.id} клонирован в ${newId}.`);
+      setStatusText(`Профиль правил ${selectedRuleset.id} клонирован в ${newId}.`);
       setCloneId('');
       setCloneName('');
       await refreshRulesets();
@@ -205,7 +205,7 @@ export function RulesetsPage() {
 
     await withBusy(async () => {
       await activateRuleset(selectedRuleset.id);
-      setStatusText(`Ruleset ${selectedRuleset.id} активирован.`);
+      setStatusText(`Профиль правил ${selectedRuleset.id} активирован.`);
       await refreshRulesets();
     });
   }
@@ -217,7 +217,7 @@ export function RulesetsPage() {
 
     await withBusy(async () => {
       await archiveRuleset(selectedRuleset.id);
-      setStatusText(`Ruleset ${selectedRuleset.id} архивирован.`);
+      setStatusText(`Профиль правил ${selectedRuleset.id} архивирован.`);
       await refreshRulesets();
     });
   }
@@ -231,16 +231,16 @@ export function RulesetsPage() {
   return (
     <section className="screen-layout">
       <aside className="panel controls">
-        <h2>Rulesets</h2>
+        <h2>Профили правил</h2>
 
         <button type="button" className="ghost-btn" onClick={onResetCreateForm}>
-          New ruleset form
+          Новая форма профиля
         </button>
 
         <label>
           ID
           <input
-            aria-label="Ruleset id"
+            aria-label="ID профиля правил"
             value={form.id}
             onChange={(event) => setForm((prev) => ({ ...prev, id: event.target.value }))}
             disabled={Boolean(selectedRuleset)}
@@ -248,27 +248,27 @@ export function RulesetsPage() {
         </label>
 
         <label>
-          Name
+          Название
           <input
-            aria-label="Ruleset name"
+            aria-label="Название профиля правил"
             value={form.name}
             onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
           />
         </label>
 
         <label>
-          Board size
+          Размер поля
           <input
-            aria-label="Board size"
+            aria-label="Размер поля"
             value={form.boardSize}
             onChange={(event) => setForm((prev) => ({ ...prev, boardSize: event.target.value }))}
           />
         </label>
 
         <label>
-          Fleet
+          Флот
           <input
-            aria-label="Fleet"
+            aria-label="Флот"
             value={form.fleet}
             onChange={(event) => setForm((prev) => ({ ...prev, fleet: event.target.value }))}
           />
@@ -280,7 +280,7 @@ export function RulesetsPage() {
             checked={form.placementNoTouch}
             onChange={(event) => setForm((prev) => ({ ...prev, placementNoTouch: event.target.checked }))}
           />
-          No-touch placement
+          Запрет соприкосновения кораблей
         </label>
 
         <label>
@@ -289,15 +289,15 @@ export function RulesetsPage() {
             checked={form.extraTurnOnHit}
             onChange={(event) => setForm((prev) => ({ ...prev, extraTurnOnHit: event.target.checked }))}
           />
-          Extra turn on hit
+          Дополнительный ход при попадании
         </label>
 
         <div className="button-row">
           <button type="button" onClick={onCreateRuleset} disabled={isBusy || Boolean(selectedRuleset)}>
-            Create
+            Создать
           </button>
           <button type="button" onClick={onUpdateRuleset} disabled={isBusy || !selectedRuleset}>
-            Save
+            Сохранить
           </button>
           <button
             type="button"
@@ -305,7 +305,7 @@ export function RulesetsPage() {
             onClick={onActivateRuleset}
             disabled={isBusy || !selectedRuleset || Boolean(selectedRuleset?.is_active)}
           >
-            Activate
+            Активировать
           </button>
           <button
             type="button"
@@ -313,20 +313,20 @@ export function RulesetsPage() {
             onClick={onArchiveRuleset}
             disabled={isBusy || !selectedRuleset || Boolean(selectedRuleset?.is_archived)}
           >
-            Archive
+            Архивировать
           </button>
         </div>
 
         <hr className="divider" />
 
         <label>
-          Clone id
-          <input aria-label="Clone id" value={cloneId} onChange={(event) => setCloneId(event.target.value)} />
+          ID клона
+          <input aria-label="ID клона" value={cloneId} onChange={(event) => setCloneId(event.target.value)} />
         </label>
 
         <label>
-          Clone name
-          <input aria-label="Clone name" value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
+          Название клона
+          <input aria-label="Название клона" value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
         </label>
 
         <button
@@ -334,7 +334,7 @@ export function RulesetsPage() {
           onClick={onCloneRuleset}
           disabled={isBusy || !selectedRuleset || !cloneId.trim() || !cloneName.trim()}
         >
-          Clone selected
+          Клонировать выбранный
         </button>
 
         <div className="status" data-testid="rulesets-status-text">
@@ -346,22 +346,22 @@ export function RulesetsPage() {
 
       <div className="screen-content">
         <section className="panel">
-          <h3>Rulesets catalog</h3>
+          <h3>Каталог профилей правил</h3>
           <table className="data-table" data-testid="rulesets-table">
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Name</th>
-                <th>Fleet</th>
-                <th>Status</th>
+                <th>Название</th>
+                <th>Флот</th>
+                <th>Статус</th>
               </tr>
             </thead>
             <tbody>
               {rulesets.map((item) => {
                 const isSelected = item.id === selectedId;
-                const statuses = [item.is_active ? 'active' : '', item.is_archived ? 'archived' : '']
+                const statuses = [item.is_active ? 'активен' : '', item.is_archived ? 'в архиве' : '']
                   .filter(Boolean)
-                  .join(', ') || 'normal';
+                  .join(', ') || 'обычный';
 
                 return (
                   <tr key={item.id}>

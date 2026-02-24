@@ -15,45 +15,45 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Battleship</h1>
-        <p>Game / Training / League / Rulesets / Bots</p>
+        <h1>Морской бой</h1>
+        <p>Игра / Тренировка / Лига / Правила / Боты</p>
       </header>
 
-      <nav className="main-nav" aria-label="Main navigation">
+      <nav className="main-nav" aria-label="Основная навигация">
         <button
           type="button"
           className={screen === 'game' ? 'nav-btn nav-btn-active' : 'nav-btn'}
           onClick={() => setScreen('game')}
         >
-          Game
+          Игра
         </button>
         <button
           type="button"
           className={screen === 'training' ? 'nav-btn nav-btn-active' : 'nav-btn'}
           onClick={() => setScreen('training')}
         >
-          Training
+          Тренировка
         </button>
         <button
           type="button"
           className={screen === 'league' ? 'nav-btn nav-btn-active' : 'nav-btn'}
           onClick={() => setScreen('league')}
         >
-          League
+          Лига
         </button>
         <button
           type="button"
           className={screen === 'rulesets' ? 'nav-btn nav-btn-active' : 'nav-btn'}
           onClick={() => setScreen('rulesets')}
         >
-          Rulesets
+          Правила
         </button>
         <button
           type="button"
           className={screen === 'bots' ? 'nav-btn nav-btn-active' : 'nav-btn'}
           onClick={() => setScreen('bots')}
         >
-          Bots
+          Боты
         </button>
       </nav>
       <BackendStatusBar />

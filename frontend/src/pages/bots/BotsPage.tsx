@@ -24,7 +24,7 @@ export function BotsPage() {
   const [checkpoints, setCheckpoints] = useState<TrainingCheckpointIndexDTO[]>([]);
   const [seedBotId, setSeedBotId] = useState('');
 
-  const [statusText, setStatusText] = useState('Загрузка bots/checkpoints...');
+  const [statusText, setStatusText] = useState('Загрузка ботов и чекпоинтов...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -50,7 +50,7 @@ export function BotsPage() {
       .catch((error: Error) => {
         if (mounted) {
           setErrorText(error.message);
-          setStatusText('Не удалось загрузить rulesets.');
+          setStatusText('Не удалось загрузить профили правил.');
         }
       });
 
@@ -81,11 +81,11 @@ export function BotsPage() {
 
     refreshData()
       .then(() => {
-        setStatusText('Готово к работе с bots/checkpoints.');
+        setStatusText('Готово к работе с ботами и чекпоинтами.');
       })
       .catch((error: Error) => {
         setErrorText(error.message);
-        setStatusText('Ошибка загрузки bots/checkpoints.');
+        setStatusText('Ошибка загрузки ботов и чекпоинтов.');
       });
   }, [selectedRulesetId, includeLegacy, policyFilter, schemaFilter]);
 
@@ -108,14 +108,14 @@ export function BotsPage() {
         checkpoint_id: row.checkpoint_id,
       });
       await refreshData();
-      setStatusText(`Checkpoint ${row.checkpoint_id} promoted to bot version.`);
+      setStatusText(`Чекпоинт ${row.checkpoint_id} преобразован в версию бота.`);
     });
   }
 
   async function onImportToLeague(botVersionId: string) {
     await withBusy(async () => {
       await registerLeagueBot(selectedRulesetId, botVersionId, importPoolType);
-      setStatusText(`Bot ${botVersionId} imported to league pool: ${importPoolType}.`);
+      setStatusText(`Бот ${botVersionId} импортирован в пул лиги: ${importPoolType}.`);
     });
   }
 
@@ -124,23 +124,23 @@ export function BotsPage() {
       const isLegacy = bot.tags.includes('legacy');
       await patchBotLabels(bot.bot_version_id, { is_legacy: !isLegacy });
       await refreshData();
-      setStatusText(`Bot ${bot.bot_version_id}: legacy = ${!isLegacy}.`);
+      setStatusText(`Бот ${bot.bot_version_id}: legacy = ${!isLegacy}.`);
     });
   }
 
   function onUseAsSeed(botVersionId: string) {
     window.localStorage.setItem(SEED_BOT_STORAGE_KEY, botVersionId);
     setSeedBotId(botVersionId);
-    setStatusText(`Training seed bot selected: ${botVersionId}.`);
+    setStatusText(`Seed-бот для тренировки выбран: ${botVersionId}.`);
   }
 
   return (
     <section className="screen-layout">
       <aside className="panel controls">
-        <h2>Bots / Checkpoints</h2>
+        <h2>Боты / Чекпоинты</h2>
 
         <label>
-          Ruleset
+          Профиль правил
           <select value={selectedRulesetId} onChange={(event) => setSelectedRulesetId(event.target.value)}>
             {rulesets.map((item) => (
               <option key={item.id} value={item.id}>
@@ -151,55 +151,55 @@ export function BotsPage() {
         </label>
 
         <label>
-          Policy filter
+          Фильтр policy
           <input value={policyFilter} onChange={(event) => setPolicyFilter(event.target.value)} placeholder="probability_strong" />
         </label>
 
         <label>
-          Feature schema filter
+          Фильтр схемы признаков
           <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.target.value)} placeholder="classic_features_v1" />
         </label>
 
         <label>
-          Include legacy
+          Показывать legacy
           <input type="checkbox" checked={includeLegacy} onChange={(event) => setIncludeLegacy(event.target.checked)} />
         </label>
 
         <label>
-          League pool for import
+          Пул лиги для импорта
           <select value={importPoolType} onChange={(event) => setImportPoolType(event.target.value as LeaguePoolType)}>
-            <option value="active">active</option>
-            <option value="baseline">baseline</option>
-            <option value="league">league</option>
+            <option value="active">active (кандидаты)</option>
+            <option value="baseline">baseline (базовые)</option>
+            <option value="league">league (лига)</option>
           </select>
         </label>
 
         <button type="button" className="ghost-btn" onClick={() => void refreshData()} disabled={isBusy}>
-          Refresh
+          Обновить
         </button>
 
         <div className="status" data-testid="bots-status-text">
           {statusText}
         </div>
 
-        <div data-testid="bots-seed-selection">Training seed: {seedBotId || '-'}</div>
+        <div data-testid="bots-seed-selection">Seed тренировки: {seedBotId || '-'}</div>
 
         {errorText && <div role="alert">{errorText}</div>}
       </aside>
 
       <div className="screen-content">
         <section className="panel">
-          <h3>Bot versions</h3>
+          <h3>Версии ботов</h3>
           <table className="data-table" data-testid="bots-table">
             <thead>
               <tr>
-                <th>Bot version</th>
-                <th>Policy</th>
-                <th>Schema</th>
-                <th>Lookahead</th>
-                <th>Source checkpoint</th>
-                <th>Tags</th>
-                <th>Actions</th>
+                <th>Версия бота</th>
+                <th>Политика</th>
+                <th>Схема</th>
+                <th>Лукахед</th>
+                <th>Исходный чекпоинт</th>
+                <th>Теги</th>
+                <th>Действия</th>
               </tr>
             </thead>
             <tbody>
@@ -213,7 +213,7 @@ export function BotsPage() {
                   <td>{bot.tags.join(', ') || '-'}</td>
                   <td>
                     <button type="button" className="mini-btn" onClick={() => onUseAsSeed(bot.bot_version_id)}>
-                      Use as seed
+                      Выбрать как seed
                     </button>{' '}
                     <button
                       type="button"
@@ -221,10 +221,10 @@ export function BotsPage() {
                       onClick={() => void onImportToLeague(bot.bot_version_id)}
                       disabled={isBusy}
                     >
-                      Import to league
+                      Импорт в лигу
                     </button>{' '}
                     <button type="button" className="mini-btn ghost-btn" onClick={() => void onToggleLegacy(bot)} disabled={isBusy}>
-                      Toggle legacy
+                      Переключить legacy
                     </button>
                   </td>
                 </tr>
@@ -234,16 +234,16 @@ export function BotsPage() {
         </section>
 
         <section className="panel">
-          <h3>Training checkpoints</h3>
+          <h3>Чекпоинты тренировки</h3>
           <table className="data-table" data-testid="bots-checkpoints-table">
             <thead>
               <tr>
-                <th>Job</th>
-                <th>Checkpoint</th>
-                <th>Batches</th>
-                <th>Best score</th>
-                <th>Stage</th>
-                <th>Action</th>
+                <th>Джоб</th>
+                <th>Чекпоинт</th>
+                <th>Батчи</th>
+                <th>Лучший score</th>
+                <th>Стадия</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>
@@ -256,7 +256,7 @@ export function BotsPage() {
                   <td>{row.stage_state ?? '-'}</td>
                   <td>
                     <button type="button" className="mini-btn" onClick={() => void onPromoteCheckpoint(row)} disabled={isBusy}>
-                      Promote to bot
+                      Преобразовать в бота
                     </button>
                   </td>
                 </tr>
