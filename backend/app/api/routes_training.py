@@ -45,6 +45,9 @@ def _to_response(job) -> TrainingJobResponse:
             early_stop_plateau_windows=job.params.early_stop_plateau_windows,
             min_windows_before_early_stop=job.params.min_windows_before_early_stop,
             tick_delay_ms=job.params.tick_delay_ms,
+            autoevolve_enabled=job.params.autoevolve_enabled,
+            meta_plateau_patience_cycles=job.params.meta_plateau_patience_cycles,
+            strictness_max_level=job.params.strictness_max_level,
         ),
         progress=TrainingProgressDTO(
             games_played=job.progress.games_played,
@@ -53,6 +56,11 @@ def _to_response(job) -> TrainingJobResponse:
             best_score=job.progress.best_score,
             last_score=job.progress.last_score,
             plateau_windows=job.progress.plateau_windows,
+            cycle_index=job.progress.cycle_index,
+            strictness_level=job.progress.strictness_level,
+            meta_plateau_counter=job.progress.meta_plateau_counter,
+            champion_gate_lcb=job.progress.champion_gate_lcb,
+            eval_protocol_hash=job.progress.eval_protocol_hash,
         ),
     )
 

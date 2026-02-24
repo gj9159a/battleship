@@ -74,6 +74,34 @@ def test_training_job_lifecycle_rest(client: TestClient) -> None:
     assert stopped['stop_reason'] == 'stopped_by_user'
 
 
+def test_training_job_exposes_autoevolve_params_and_progress_fields(client: TestClient) -> None:
+    created = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed': 42,
+            'params': _fast_params(
+                autoevolve_enabled=False,
+                meta_plateau_patience_cycles=5,
+                strictness_max_level=2,
+            ),
+        },
+    )
+    assert created.status_code == 200
+    payload = created.json()
+
+    assert payload['params']['autoevolve_enabled'] is False
+    assert payload['params']['meta_plateau_patience_cycles'] == 5
+    assert payload['params']['strictness_max_level'] == 2
+
+    assert payload['progress']['cycle_index'] == 0
+    assert payload['progress']['strictness_level'] == 0
+    assert payload['progress']['meta_plateau_counter'] == 0
+    assert payload['progress']['champion_gate_lcb'] == 0.0
+    assert isinstance(payload['progress']['eval_protocol_hash'], str)
+    assert len(payload['progress']['eval_protocol_hash']) == 16
+
+
 def test_training_checkpoints_save_and_load(client: TestClient) -> None:
     created = client.post(
         '/api/v1/training/jobs',

@@ -67,6 +67,9 @@ export type TrainingParamsDTO = {
   early_stop_plateau_windows: number;
   min_windows_before_early_stop: number;
   tick_delay_ms: number;
+  autoevolve_enabled: boolean;
+  meta_plateau_patience_cycles: number;
+  strictness_max_level: number;
 };
 
 export type TrainingProgressDTO = {
@@ -76,6 +79,11 @@ export type TrainingProgressDTO = {
   best_score: number;
   last_score: number;
   plateau_windows: number;
+  cycle_index: number;
+  strictness_level: number;
+  meta_plateau_counter: number;
+  champion_gate_lcb: number;
+  eval_protocol_hash: string;
 };
 
 export type TrainingJobDTO = {

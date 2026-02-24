@@ -39,6 +39,9 @@ class TrainingParams:
     early_stop_plateau_windows: int = 30
     min_windows_before_early_stop: int = 120
     tick_delay_ms: int = 0
+    autoevolve_enabled: bool = True
+    meta_plateau_patience_cycles: int = 3
+    strictness_max_level: int = 3
 
     def __post_init__(self) -> None:
         if self.microbatch_size <= 0:
@@ -63,6 +66,10 @@ class TrainingParams:
             raise ValueError("quality_gate_min_lower_bound must be in [0, 1]")
         if self.tick_delay_ms < 0:
             raise ValueError("tick_delay_ms must be >= 0")
+        if self.meta_plateau_patience_cycles <= 0:
+            raise ValueError("meta_plateau_patience_cycles must be > 0")
+        if self.strictness_max_level < 0:
+            raise ValueError("strictness_max_level must be >= 0")
 
 
 @dataclass(slots=True)
@@ -75,6 +82,11 @@ class TrainingProgress:
     plateau_windows: int = 0
     candidate_streak: int = 0
     stage_enter_window: int = 0
+    cycle_index: int = 0
+    strictness_level: int = 0
+    meta_plateau_counter: int = 0
+    champion_gate_lcb: float = 0.0
+    eval_protocol_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)

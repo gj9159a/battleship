@@ -18,6 +18,8 @@ import type {
 } from '../../shared/api/types';
 
 const RULESETS_RETRY_DELAY_MS = 1000;
+const ACTIVE_JOB_STORAGE_KEY = 'training.active_job_id';
+const METRICS_STORAGE_KEY_PREFIX = 'training.metrics.';
 const DEFAULT_PARAMS: TrainingParamsDTO = {
   microbatch_size: 100,
   eval_window_batches: 2,
@@ -35,6 +37,9 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
   early_stop_plateau_windows: 30,
   min_windows_before_early_stop: 120,
   tick_delay_ms: 0,
+  autoevolve_enabled: true,
+  meta_plateau_patience_cycles: 3,
+  strictness_max_level: 3,
 };
 const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
@@ -44,6 +49,8 @@ type MetricPoint = {
   score: number;
   best: number;
   plateau: number;
+  cycle: number;
+  strictness: number;
 };
 
 function toNumber(value: string, fallback: number): number {
@@ -68,6 +75,49 @@ export function TrainingPage() {
   const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const storedJobId = window.localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    if (!storedJobId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const restore = async () => {
+      try {
+        const restored = await getTrainingJob(storedJobId);
+        if (cancelled) {
+          return;
+        }
+        setJob(restored);
+        await refreshCheckpoints(restored.id);
+        if (cancelled) {
+          return;
+        }
+        const raw = window.localStorage.getItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw) as MetricPoint[];
+            if (Array.isArray(parsed)) {
+              setMetrics(parsed.slice(0, 30));
+            }
+          } catch {
+            window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
+          }
+        }
+        setStatusText(`Восстановлена тренировка (${restored.id}).`);
+      } catch {
+        window.localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+      }
+    };
+
+    void restore();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const storedSeedBot = window.localStorage.getItem(SEED_BOT_STORAGE_KEY);
@@ -117,6 +167,16 @@ export function TrainingPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!job) {
+      return;
+    }
+    window.localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, job.id);
+    if (['Stopped', 'Completed', 'Error'].includes(job.lifecycle_state)) {
+      window.localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+    }
+  }, [job]);
 
   async function refreshJob(jobId: string): Promise<TrainingJobDTO> {
     const fresh = await getTrainingJob(jobId);
@@ -180,8 +240,14 @@ export function TrainingPage() {
           score: Number(event.payload.score ?? 0),
           best: Number(event.payload.best_score ?? 0),
           plateau: Number(event.payload.plateau_windows ?? 0),
+          cycle: Number(event.payload.cycle_index ?? 0),
+          strictness: Number(event.payload.strictness_level ?? 0),
         };
-        setMetrics((prev) => [point, ...prev].slice(0, 30));
+        setMetrics((prev) => {
+          const next = [point, ...prev].slice(0, 30);
+          window.localStorage.setItem(`${METRICS_STORAGE_KEY_PREFIX}${job.id}`, JSON.stringify(next));
+          return next;
+        });
       }
 
       if (event.event_type === 'job.lifecycle_changed' || event.event_type === 'training.checkpoint_created') {
@@ -213,6 +279,9 @@ export function TrainingPage() {
     setIsBusy(true);
     setErrorText(null);
     setMetrics([]);
+    if (job?.id) {
+      window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${job.id}`);
+    }
     setEventLines([]);
     setCheckpoints([]);
     setStageReason('');
@@ -226,6 +295,8 @@ export function TrainingPage() {
       });
       const started = await commandTrainingJob(created.id, 'start');
       setJob(started);
+      window.localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, started.id);
+      window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${started.id}`);
       await refreshCheckpoints(started.id);
       setStatusText(`Тренировка запущена (${started.id}).`);
     } catch (error) {
@@ -428,6 +499,49 @@ export function TrainingPage() {
             </label>
 
             <label>
+              Автоэволюция
+              <input
+                aria-label="Автоэволюция"
+                type="checkbox"
+                checked={params.autoevolve_enabled}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    autoevolve_enabled: event.target.checked,
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Терпение мета-плато (циклы)
+              <input
+                aria-label="Терпение мета-плато"
+                value={params.meta_plateau_patience_cycles}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    meta_plateau_patience_cycles: toNumber(event.target.value, prev.meta_plateau_patience_cycles),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Макс. уровень строгости
+              <input
+                aria-label="Макс. уровень строгости"
+                value={params.strictness_max_level}
+                onChange={(event) =>
+                  setParams((prev) => ({
+                    ...prev,
+                    strictness_max_level: toNumber(event.target.value, prev.strictness_max_level),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
               Целевой score
               <input
                 aria-label="Целевой score"
@@ -564,6 +678,8 @@ export function TrainingPage() {
                 <tr>
                   <th>Батч</th>
                   <th>Окно</th>
+                  <th>Цикл</th>
+                  <th>Строгость</th>
                   <th>Счёт</th>
                   <th>Лучший</th>
                   <th>Плато</th>
@@ -574,6 +690,8 @@ export function TrainingPage() {
                 <tr key={`m-${point.batch}-${point.window}`}>
                   <td>{point.batch}</td>
                   <td>{point.window}</td>
+                  <td>{point.cycle}</td>
+                  <td>{point.strictness}</td>
                   <td>{point.score.toFixed(4)}</td>
                   <td>{point.best.toFixed(4)}</td>
                   <td>{point.plateau}</td>
@@ -588,6 +706,13 @@ export function TrainingPage() {
               {job.progress.best_score.toFixed(4)}
             </div>
           )}
+          {job && (
+            <div className="inline-summary">
+              Цикл: {job.progress.cycle_index} | Уровень строгости: {job.progress.strictness_level} | Метаплато:{' '}
+              {job.progress.meta_plateau_counter} | LCB чемпиона: {job.progress.champion_gate_lcb.toFixed(4)}
+            </div>
+          )}
+          {job && <div className="inline-summary">Протокол eval: {job.progress.eval_protocol_hash || '-'}</div>}
           {stageReason && <div className="inline-summary">Причина смены стадии: {stageReason}</div>}
           {job && (
             <div className="inline-summary" data-testid="training-weights-summary">

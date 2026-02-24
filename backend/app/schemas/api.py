@@ -130,6 +130,9 @@ class TrainingParamsDTO(BaseModel):
     early_stop_plateau_windows: int = Field(default=30, gt=0)
     min_windows_before_early_stop: int = Field(default=120, gt=0)
     tick_delay_ms: int = Field(default=0, ge=0)
+    autoevolve_enabled: bool = True
+    meta_plateau_patience_cycles: int = Field(default=3, gt=0)
+    strictness_max_level: int = Field(default=3, ge=0)
 
 
 class TrainingJobCreateRequest(BaseModel):
@@ -151,6 +154,11 @@ class TrainingProgressDTO(BaseModel):
     best_score: float
     last_score: float
     plateau_windows: int
+    cycle_index: int
+    strictness_level: int
+    meta_plateau_counter: int
+    champion_gate_lcb: float
+    eval_protocol_hash: str
 
 
 class TrainingCheckpointResponse(BaseModel):

@@ -48,6 +48,9 @@ const JOB_IDLE = {
     early_stop_plateau_windows: 30,
     min_windows_before_early_stop: 120,
     tick_delay_ms: 0,
+    autoevolve_enabled: true,
+    meta_plateau_patience_cycles: 3,
+    strictness_max_level: 3,
   },
   progress: {
     games_played: 0,
@@ -56,6 +59,11 @@ const JOB_IDLE = {
     best_score: 0,
     last_score: 0,
     plateau_windows: 0,
+    cycle_index: 0,
+    strictness_level: 0,
+    meta_plateau_counter: 0,
+    champion_gate_lcb: 0,
+    eval_protocol_hash: '',
   },
 };
 

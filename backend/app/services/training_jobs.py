@@ -1,6 +1,8 @@
 import threading
 import time
 import math
+import json
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
@@ -43,9 +45,26 @@ class _TrainingRuntime:
     last_auto_promote_window: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _StrictnessConfig:
+    level: int
+    quality_gate_games: int
+    min_winrate: float
+    min_lcb: float
+    top_k_opponents: int
+    league_only: bool
+    dual_seed: bool
+
+
 class TrainingJobService:
     _TOP_K_OPPONENTS = 16
     _PROMOTE_EVERY_WINDOWS = 4
+    _STRICTNESS_LEVELS: tuple[_StrictnessConfig, ...] = (
+        _StrictnessConfig(0, 256, 0.57, 0.53, 16, False, False),
+        _StrictnessConfig(1, 384, 0.60, 0.56, 16, False, False),
+        _StrictnessConfig(2, 512, 0.62, 0.58, 16, True, False),
+        _StrictnessConfig(3, 768, 0.64, 0.60, 16, True, True),
+    )
 
     def __init__(
         self,
@@ -84,6 +103,11 @@ class TrainingJobService:
                     plateau_windows=int(progress_payload.get("plateau_windows", 0)),
                     candidate_streak=int(progress_payload.get("candidate_streak", 0)),
                     stage_enter_window=int(progress_payload.get("stage_enter_window", 0)),
+                    cycle_index=int(progress_payload.get("cycle_index", 0)),
+                    strictness_level=int(progress_payload.get("strictness_level", 0)),
+                    meta_plateau_counter=int(progress_payload.get("meta_plateau_counter", 0)),
+                    champion_gate_lcb=float(progress_payload.get("champion_gate_lcb", 0.0)),
+                    eval_protocol_hash=str(progress_payload.get("eval_protocol_hash", "")),
                 )
                 state = row["lifecycle_state"]
                 if state in {"Running", "Pausing", "Stopping"}:
@@ -117,6 +141,8 @@ class TrainingJobService:
                     ),
                     last_auto_promote_window=job.progress.windows_done,
                 )
+                if not job.progress.eval_protocol_hash:
+                    job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
                 self._persist_job_locked(job)
 
             for checkpoint in self._store.load_training_checkpoints():
@@ -155,6 +181,9 @@ class TrainingJobService:
                     "early_stop_plateau_windows": job.params.early_stop_plateau_windows,
                     "min_windows_before_early_stop": job.params.min_windows_before_early_stop,
                     "tick_delay_ms": job.params.tick_delay_ms,
+                    "autoevolve_enabled": job.params.autoevolve_enabled,
+                    "meta_plateau_patience_cycles": job.params.meta_plateau_patience_cycles,
+                    "strictness_max_level": job.params.strictness_max_level,
                 },
                 "progress": {
                     "games_played": job.progress.games_played,
@@ -165,6 +194,11 @@ class TrainingJobService:
                     "plateau_windows": job.progress.plateau_windows,
                     "candidate_streak": job.progress.candidate_streak,
                     "stage_enter_window": job.progress.stage_enter_window,
+                    "cycle_index": job.progress.cycle_index,
+                    "strictness_level": job.progress.strictness_level,
+                    "meta_plateau_counter": job.progress.meta_plateau_counter,
+                    "champion_gate_lcb": job.progress.champion_gate_lcb,
+                    "eval_protocol_hash": job.progress.eval_protocol_hash,
                 },
                 "current_weights": dict(job.current_weights),
                 "best_weights": dict(job.best_weights),
@@ -198,6 +232,7 @@ class TrainingJobService:
             current_weights=dict(normalized_seed_weights),
             best_weights=dict(normalized_seed_weights),
         )
+        job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
         with self._lock:
             self._jobs[job.id] = job
             self._checkpoints[job.id] = []
@@ -488,6 +523,7 @@ class TrainingJobService:
         wr_baseline: float | None = None
         wr_active: float | None = None
         avg_turns_win: float | None = None
+        strictness = self._strictness_config_for_job(job)
 
         if job.progress.batches_done % job.params.eval_window_batches == 0:
             if runtime.simulator is None:
@@ -501,7 +537,7 @@ class TrainingJobService:
                     seed_weights=job.current_weights,
                 )
 
-            league_opponents = self._collect_top_league_opponents_locked(job)
+            league_opponents = self._collect_top_league_opponents_locked(job, strictness)
             metrics = runtime.simulator.next_window(job.progress.windows_done, league_opponents=league_opponents)
             prev_best = job.progress.best_score
             job.progress.windows_done += 1
@@ -543,6 +579,11 @@ class TrainingJobService:
                 "best_score": job.progress.best_score,
                 "plateau_windows": job.progress.plateau_windows,
                 "window_evaluated": wr_baseline is not None,
+                "cycle_index": job.progress.cycle_index,
+                "strictness_level": job.progress.strictness_level,
+                "meta_plateau_counter": job.progress.meta_plateau_counter,
+                "champion_gate_lcb": job.progress.champion_gate_lcb,
+                "eval_protocol_hash": job.progress.eval_protocol_hash,
             },
         )
 
@@ -610,7 +651,11 @@ class TrainingJobService:
         )
         self._league_service.register_bot(job.ruleset_id, seed_bot.bot_version_id, "active")
 
-    def _collect_top_league_opponents_locked(self, job: TrainingJob) -> list[dict[str, float]]:
+    def _collect_top_league_opponents_locked(
+        self,
+        job: TrainingJob,
+        strictness: _StrictnessConfig,
+    ) -> list[dict[str, float]]:
         if self._bot_catalog is None or self._league_service is None:
             return []
 
@@ -618,12 +663,18 @@ class TrainingJobService:
             table = self._league_service.list_table(job.ruleset_id)
         except KeyError:
             return []
-        league_rows = [row for row in table if row.pool_type == "league"][: self._TOP_K_OPPONENTS]
-        if not league_rows:
-            league_rows = [row for row in table if row.pool_type == "active"][: self._TOP_K_OPPONENTS]
+
+        if strictness.league_only:
+            rows = [row for row in table if row.pool_type == "league"][: strictness.top_k_opponents]
+            if not rows:
+                rows = [row for row in table if row.pool_type == "active"][: strictness.top_k_opponents]
+        else:
+            rows = [row for row in table if row.pool_type in {"league", "active", "baseline"}][
+                : strictness.top_k_opponents
+            ]
 
         opponents: list[dict[str, float]] = []
-        for row in league_rows:
+        for row in rows:
             try:
                 bot = self._bot_catalog.get_bot(row.bot_version_id)
             except KeyError:
@@ -642,14 +693,28 @@ class TrainingJobService:
 
         if (job.progress.windows_done - runtime.last_auto_promote_window) < self._PROMOTE_EVERY_WINDOWS:
             return
+        runtime.last_auto_promote_window = job.progress.windows_done
 
         checkpoint_payload = self._checkpoint_store.load(checkpoint)
         weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
         if not weights:
             return
 
-        gate = self._run_quality_gate_locked(job, normalize_weights(weights))
+        strictness = self._strictness_config_for_job(job)
+        protocol_hash_before = job.progress.eval_protocol_hash
+        if not protocol_hash_before:
+            job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
+            protocol_hash_before = job.progress.eval_protocol_hash
+
+        before_signature = self._top16_signature_locked(job.ruleset_id)
+        gate_lcb = float(job.progress.champion_gate_lcb)
+        improved = False
+        job.progress.cycle_index += 1
+
+        gate = self._run_quality_gate_locked(job, normalize_weights(weights), strictness)
+        gate_lcb = float(gate["lower_bound"])
         if not gate["passed"]:
+            self._update_autoevolve_progress_locked(job, improved=False, gate_lcb=gate_lcb)
             self._event_bus.publish_sync(
                 event_type="training.quality_gate_failed",
                 entity_id=job.id,
@@ -660,8 +725,11 @@ class TrainingJobService:
                     "wins": gate["wins"],
                     "winrate": gate["winrate"],
                     "lower_bound": gate["lower_bound"],
-                    "required_winrate": job.params.quality_gate_min_winrate,
-                    "required_lower_bound": job.params.quality_gate_min_lower_bound,
+                    "required_winrate": gate["required_winrate"],
+                    "required_lower_bound": gate["required_lower_bound"],
+                    "strictness_level": strictness.level,
+                    "eval_protocol_hash": protocol_hash_before,
+                    "cycle_index": job.progress.cycle_index,
                 },
             )
             return
@@ -696,6 +764,10 @@ class TrainingJobService:
             },
         )
         self._run_promotion_matches_locked(job, bot.bot_version_id, bot.weights)
+
+        after_signature = self._top16_signature_locked(job.ruleset_id)
+        improved = after_signature != before_signature or gate_lcb > (job.progress.champion_gate_lcb + 1e-6)
+        self._update_autoevolve_progress_locked(job, improved=improved, gate_lcb=gate_lcb)
 
     def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
         if self._bot_catalog is None or self._league_service is None:
@@ -741,52 +813,92 @@ class TrainingJobService:
                 winner_id=winner_id,
             )
 
-    def _run_quality_gate_locked(self, job: TrainingJob, candidate_weights: dict[str, float]) -> dict[str, float | int | bool]:
+    def _run_quality_gate_locked(
+        self,
+        job: TrainingJob,
+        candidate_weights: dict[str, float],
+        strictness: _StrictnessConfig,
+    ) -> dict[str, float | int | bool]:
         if self._bot_catalog is None or self._league_service is None:
-            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+            return {
+                "passed": True,
+                "games": 0,
+                "wins": 0,
+                "winrate": 1.0,
+                "lower_bound": 1.0,
+                "required_winrate": strictness.min_winrate,
+                "required_lower_bound": strictness.min_lcb,
+            }
 
         try:
             table = self._league_service.list_table(job.ruleset_id)
             ruleset = get_ruleset(job.ruleset_id)
         except KeyError:
-            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+            return {
+                "passed": True,
+                "games": 0,
+                "wins": 0,
+                "winrate": 1.0,
+                "lower_bound": 1.0,
+                "required_winrate": strictness.min_winrate,
+                "required_lower_bound": strictness.min_lcb,
+            }
 
-        opponents = [
-            row.bot_version_id
-            for row in table
-            if row.pool_type in {"league", "baseline", "active"}
-        ][: self._TOP_K_OPPONENTS]
+        if strictness.league_only:
+            opponents = [row.bot_version_id for row in table if row.pool_type == "league"][: strictness.top_k_opponents]
+            if not opponents:
+                opponents = [row.bot_version_id for row in table if row.pool_type == "active"][
+                    : strictness.top_k_opponents
+                ]
+        else:
+            opponents = [row.bot_version_id for row in table if row.pool_type in {"league", "baseline", "active"}][
+                : strictness.top_k_opponents
+            ]
         if not opponents:
-            return {"passed": True, "games": 0, "wins": 0, "winrate": 1.0, "lower_bound": 1.0}
+            return {
+                "passed": True,
+                "games": 0,
+                "wins": 0,
+                "winrate": 1.0,
+                "lower_bound": 1.0,
+                "required_winrate": strictness.min_winrate,
+                "required_lower_bound": strictness.min_lcb,
+            }
 
-        games = max(2, job.params.quality_gate_games)
+        games = max(2, strictness.quality_gate_games)
         wins = 0
+        total = 0
+        seeds = [job.seed * 10_007 + job.progress.windows_done * 503]
+        if strictness.dual_seed:
+            seeds.append(job.seed * 20_011 + job.progress.windows_done * 709 + 131)
 
-        for idx in range(games):
-            opponent_id = opponents[idx % len(opponents)]
-            try:
-                opponent = self._bot_catalog.get_bot(opponent_id)
-            except KeyError:
-                continue
+        for seed_index, base_seed in enumerate(seeds):
+            for idx in range(games):
+                opponent_id = opponents[idx % len(opponents)]
+                try:
+                    opponent = self._bot_catalog.get_bot(opponent_id)
+                except KeyError:
+                    continue
 
-            rng = random.Random(job.seed * 10_007 + job.progress.windows_done * 503 + idx * 13)
-            result = play_strong_vs(
-                ruleset,
-                rng,
-                strong_weights=candidate_weights,
-                opponent_kind="strong",
-                opponent_weights=opponent.weights,
-                first_player=idx % 2,
-            )
-            if result.winner == 0:
-                wins += 1
+                rng = random.Random(base_seed + idx * 13 + seed_index * 9_973)
+                result = play_strong_vs(
+                    ruleset,
+                    rng,
+                    strong_weights=candidate_weights,
+                    opponent_kind="strong",
+                    opponent_weights=opponent.weights,
+                    first_player=idx % 2,
+                )
+                total += 1
+                if result.winner == 0:
+                    wins += 1
 
-        total = max(1, games)
+        total = max(1, total)
         winrate = wins / total
         lower_bound = self._wilson_lower_bound(wins=wins, total=total)
         passed = (
-            winrate >= job.params.quality_gate_min_winrate
-            and lower_bound >= job.params.quality_gate_min_lower_bound
+            winrate >= strictness.min_winrate
+            and lower_bound >= strictness.min_lcb
         )
         return {
             "passed": passed,
@@ -794,6 +906,8 @@ class TrainingJobService:
             "wins": wins,
             "winrate": round(winrate, 6),
             "lower_bound": round(lower_bound, 6),
+            "required_winrate": strictness.min_winrate,
+            "required_lower_bound": strictness.min_lcb,
         }
 
     @staticmethod
@@ -806,6 +920,111 @@ class TrainingJobService:
         center = p + z2 / (2 * total)
         margin = z * math.sqrt((p * (1 - p) + z2 / (4 * total)) / total)
         return max(0.0, (center - margin) / denom)
+
+    def _strictness_config_for_job(self, job: TrainingJob) -> _StrictnessConfig:
+        level = max(0, int(job.progress.strictness_level))
+        max_level = min(int(job.params.strictness_max_level), len(self._STRICTNESS_LEVELS) - 1)
+        level = min(level, max_level)
+
+        base = self._STRICTNESS_LEVELS[level]
+        base_games = max(2, int(job.params.quality_gate_games))
+        min_winrate = max(0.0, float(job.params.quality_gate_min_winrate))
+        min_lcb = max(0.0, float(job.params.quality_gate_min_lower_bound))
+        if level == 0:
+            return _StrictnessConfig(
+                level=0,
+                quality_gate_games=base_games,
+                min_winrate=min_winrate,
+                min_lcb=min_lcb,
+                top_k_opponents=base.top_k_opponents,
+                league_only=False,
+                dual_seed=False,
+            )
+        return _StrictnessConfig(
+            level=level,
+            quality_gate_games=max(base_games, base.quality_gate_games),
+            min_winrate=max(min_winrate, base.min_winrate),
+            min_lcb=max(min_lcb, base.min_lcb),
+            top_k_opponents=base.top_k_opponents,
+            league_only=base.league_only,
+            dual_seed=base.dual_seed,
+        )
+
+    def _compute_eval_protocol_hash(self, job: TrainingJob) -> str:
+        strictness = self._strictness_config_for_job(job)
+        payload = {
+            "ruleset_id": job.ruleset_id,
+            "lookahead_policy_version": "adaptive_v1",
+            "train_split": job.params.train_split,
+            "microbatch_size": job.params.microbatch_size,
+            "eval_window_batches": job.params.eval_window_batches,
+            "population_size": job.params.population_size,
+            "worker_count": job.params.worker_count,
+            "quality_gate_games": strictness.quality_gate_games,
+            "quality_gate_min_winrate": strictness.min_winrate,
+            "quality_gate_min_lower_bound": strictness.min_lcb,
+            "top_k_opponents": strictness.top_k_opponents,
+            "league_only": strictness.league_only,
+            "dual_seed": strictness.dual_seed,
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+    def _top16_signature_locked(self, ruleset_id: str) -> str:
+        if self._league_service is None:
+            return ""
+        try:
+            table = self._league_service.list_table(ruleset_id)
+        except KeyError:
+            return ""
+        rows = [row for row in table if row.pool_type == "league"][:16]
+        if not rows:
+            rows = table[:16]
+        payload = [
+            {
+                "bot_version_id": row.bot_version_id,
+                "score": round(row.conservative_score, 6),
+            }
+            for row in rows
+        ]
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+    def _update_autoevolve_progress_locked(self, job: TrainingJob, *, improved: bool, gate_lcb: float) -> None:
+        if gate_lcb > job.progress.champion_gate_lcb:
+            job.progress.champion_gate_lcb = gate_lcb
+
+        if improved:
+            job.progress.meta_plateau_counter = 0
+            return
+
+        job.progress.meta_plateau_counter += 1
+        if not job.params.autoevolve_enabled:
+            return
+
+        patience = max(1, int(job.params.meta_plateau_patience_cycles))
+        if job.progress.meta_plateau_counter < patience:
+            return
+
+        max_level = min(int(job.params.strictness_max_level), len(self._STRICTNESS_LEVELS) - 1)
+        if job.progress.strictness_level >= max_level:
+            return
+
+        old_level = job.progress.strictness_level
+        job.progress.strictness_level = min(max_level, old_level + 1)
+        job.progress.meta_plateau_counter = 0
+        job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
+        self._event_bus.publish_sync(
+            event_type="training.strictness_changed",
+            entity_id=job.id,
+            ruleset_id=job.ruleset_id,
+            payload={
+                "old_level": old_level,
+                "new_level": job.progress.strictness_level,
+                "eval_protocol_hash": job.progress.eval_protocol_hash,
+                "cycle_index": job.progress.cycle_index,
+            },
+        )
 
     def _apply_stage_transitions_locked(self, job: TrainingJob) -> None:
         stage = job.stage_state
