@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .data/
 frontend/node_modules/
+desktop/node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/

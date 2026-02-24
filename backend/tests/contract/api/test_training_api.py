@@ -169,6 +169,49 @@ def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient
 
 
 def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:
+    source_job = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed': 22,
+            'params': {
+                'budget_games': 5000,
+                'microbatch_size': 5,
+                'eval_window_batches': 1,
+                'checkpoint_interval_batches': 1,
+                'target_score': 1.0,
+                'early_stop_plateau_windows': 1000,
+                'tick_delay_ms': 5,
+            },
+        },
+    )
+    assert source_job.status_code == 200
+    source_job_id = source_job.json()['id']
+    started = client.post(f'/api/v1/training/jobs/{source_job_id}/commands', json={'command': 'start'})
+    assert started.status_code == 200
+
+    checkpoint_id = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        checkpoints = client.get(f'/api/v1/training/jobs/{source_job_id}/checkpoints')
+        assert checkpoints.status_code == 200
+        payload = checkpoints.json()
+        if payload:
+            checkpoint_id = payload[0]['checkpoint_id']
+            break
+        time.sleep(0.02)
+    assert checkpoint_id is not None
+
+    bot_created = client.post(
+        '/api/v1/bots/from-checkpoint',
+        json={
+            'job_id': source_job_id,
+            'checkpoint_id': checkpoint_id,
+            'bot_version_id': 'candidate-001',
+        },
+    )
+    assert bot_created.status_code == 200
+
     created = client.post(
         '/api/v1/training/jobs',
         json={
@@ -180,3 +223,84 @@ def test_training_job_accepts_seed_bot_version(client: TestClient) -> None:
 
     assert created.status_code == 200
     assert created.json()['seed_bot_version_id'] == 'candidate-001'
+
+
+def test_training_job_rejects_unknown_seed_bot(client: TestClient) -> None:
+    created = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed_bot_version_id': 'unknown-bot',
+            'seed': 101,
+        },
+    )
+
+    assert created.status_code == 404
+
+
+def test_training_job_rejects_seed_bot_with_foreign_ruleset(client: TestClient) -> None:
+    ruleset_created = client.post(
+        '/api/v1/rulesets',
+        json={
+            'id': 'classic_alt_v2',
+            'name': 'Classic Alt v2',
+            'board_size': 10,
+            'fleet': [5, 4, 3, 3, 2],
+            'placement_no_touch': False,
+            'extra_turn_on_hit': True,
+        },
+    )
+    assert ruleset_created.status_code == 200
+
+    source_job = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed': 33,
+            'params': {
+                'budget_games': 5000,
+                'microbatch_size': 5,
+                'eval_window_batches': 1,
+                'checkpoint_interval_batches': 1,
+                'target_score': 1.0,
+                'early_stop_plateau_windows': 1000,
+                'tick_delay_ms': 5,
+            },
+        },
+    )
+    assert source_job.status_code == 200
+    source_job_id = source_job.json()['id']
+    started = client.post(f'/api/v1/training/jobs/{source_job_id}/commands', json={'command': 'start'})
+    assert started.status_code == 200
+
+    checkpoint_id = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        checkpoints = client.get(f'/api/v1/training/jobs/{source_job_id}/checkpoints')
+        assert checkpoints.status_code == 200
+        payload = checkpoints.json()
+        if payload:
+            checkpoint_id = payload[0]['checkpoint_id']
+            break
+        time.sleep(0.02)
+    assert checkpoint_id is not None
+
+    bot_created = client.post(
+        '/api/v1/bots/from-checkpoint',
+        json={
+            'job_id': source_job_id,
+            'checkpoint_id': checkpoint_id,
+            'bot_version_id': 'classic-v1-seed-1',
+        },
+    )
+    assert bot_created.status_code == 200
+
+    invalid = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_alt_v2',
+            'seed_bot_version_id': 'classic-v1-seed-1',
+            'seed': 10,
+        },
+    )
+    assert invalid.status_code == 422

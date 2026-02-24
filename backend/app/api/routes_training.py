@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_training_jobs
+from app.api.deps import get_bot_catalog, get_training_jobs
 from app.schemas import (
     TrainingCheckpointResponse,
     TrainingCommandRequest,
@@ -10,6 +10,7 @@ from app.schemas import (
     TrainingProgressDTO,
 )
 from app.services.training_jobs import TrainingJobService
+from app.services import BotCatalogService
 from app.trainer import TrainingParams
 
 router = APIRouter(prefix="/api/v1/training/jobs", tags=["training"])
@@ -52,8 +53,16 @@ def _to_response(job) -> TrainingJobResponse:
 async def create_training_job(
     payload: TrainingJobCreateRequest,
     training_jobs: TrainingJobService = Depends(get_training_jobs),
+    bot_catalog: BotCatalogService = Depends(get_bot_catalog),
 ) -> TrainingJobResponse:
     try:
+        if payload.seed_bot_version_id:
+            seed_bot = bot_catalog.get_bot(payload.seed_bot_version_id)
+            if seed_bot.ruleset_id != payload.ruleset_id:
+                raise ValueError(
+                    f"seed_bot_version_id ruleset mismatch: {seed_bot.ruleset_id} != {payload.ruleset_id}"
+                )
+
         params = TrainingParams(**payload.params.model_dump()) if payload.params else TrainingParams()
         job = training_jobs.create_job(
             payload.ruleset_id,
