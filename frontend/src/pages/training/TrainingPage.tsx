@@ -22,6 +22,8 @@ const RULESETS_RETRY_DELAY_MS = 1000;
 const ACTIVE_JOB_STORAGE_KEY = 'training.active_job_id';
 const METRICS_STORAGE_KEY_PREFIX = 'training.metrics.';
 const DEFAULT_PARAMS: TrainingParamsDTO = {
+  games_per_candidate: 100,
+  epoch_iters: 2,
   microbatch_size: 100,
   eval_window_batches: 2,
   checkpoint_interval_batches: 50,
@@ -517,6 +519,7 @@ export function TrainingPage() {
     if (!job || job.progress.batches_done <= 0) {
       return;
     }
+    const epochIters = Math.max(1, readNumber(job.params.epoch_iters, readNumber(job.params.eval_window_batches, 1)));
 
     upsertMetric(
       {
@@ -529,7 +532,7 @@ export function TrainingPage() {
         populationSize: readNumber(job.progress.current_population_size, job.params.population_size),
         windowEvaluated: Boolean(
           job.progress.windows_done > 0 &&
-            job.progress.batches_done === job.progress.windows_done * Math.max(1, job.params.eval_window_batches),
+            job.progress.batches_done === job.progress.windows_done * epochIters,
         ),
         avgShotsToSinkAll: readNumber(job.progress.last_avg_shots_to_sink_all),
         p95ShotsToSinkAll: readNumber(job.progress.last_p95_shots_to_sink_all),
@@ -559,7 +562,7 @@ export function TrainingPage() {
     job?.progress.plateau_windows,
     job?.progress.cycle_index,
     job?.progress.current_population_size,
-    job?.params.eval_window_batches,
+    job?.params.epoch_iters,
     job?.progress.last_avg_shots_to_sink_all,
     job?.progress.last_p95_shots_to_sink_all,
     job?.progress.last_avg_shots_to_first_hit,
@@ -583,7 +586,7 @@ export function TrainingPage() {
   const canStop = job ? ['Running', 'Pausing', 'Paused'].includes(job.lifecycle_state) : false;
 
   const windowMetrics = useMemo(() => {
-    const evalWindowBatches = Math.max(1, readNumber(job?.params.eval_window_batches, 1));
+    const evalWindowBatches = Math.max(1, readNumber(job?.params.epoch_iters, 1));
     const byWindow = new Map<number, MetricPoint>();
     for (const point of metrics) {
       if (!point.windowEvaluated || point.window <= 0) {
@@ -605,7 +608,7 @@ export function TrainingPage() {
       }
     }
     return Array.from(byWindow.values()).sort((left, right) => right.batch - left.batch);
-  }, [job?.params.eval_window_batches, metrics]);
+  }, [job?.params.epoch_iters, metrics]);
   const latestMetrics = useMemo(() => windowMetrics.slice(0, 10), [windowMetrics]);
   const chartPoints = useMemo(() => windowMetrics.slice(0, 80).reverse(), [windowMetrics]);
   const latestPoint = latestMetrics[0] ?? null;
@@ -779,23 +782,37 @@ export function TrainingPage() {
         </label>
 
         <label>
-          Микробатч
+          Игр на кандидата
           <input
-            aria-label="Микробатч"
-            value={params.microbatch_size}
+            aria-label="Игр на кандидата"
+            value={params.games_per_candidate}
             onChange={(event) =>
-              setParams((prev) => ({ ...prev, microbatch_size: toNumber(event.target.value, prev.microbatch_size) }))
+              setParams((prev) => {
+                const value = toNumber(event.target.value, prev.games_per_candidate);
+                return {
+                  ...prev,
+                  games_per_candidate: value,
+                  microbatch_size: value,
+                };
+              })
             }
           />
         </label>
 
         <label>
-          Окно оценки
+          Итераций в эпохе
           <input
-            aria-label="Окно оценки"
-            value={params.eval_window_batches}
+            aria-label="Итераций в эпохе"
+            value={params.epoch_iters}
             onChange={(event) =>
-              setParams((prev) => ({ ...prev, eval_window_batches: toNumber(event.target.value, prev.eval_window_batches) }))
+              setParams((prev) => {
+                const value = toNumber(event.target.value, prev.epoch_iters);
+                return {
+                  ...prev,
+                  epoch_iters: value,
+                  eval_window_batches: value,
+                };
+              })
             }
           />
         </label>
@@ -936,7 +953,7 @@ export function TrainingPage() {
       <div className="screen-content">
         <section className="panel">
           <h3>Метрики в реальном времени</h3>
-          <div className="inline-summary">В графиках и таблицах используются только финальные точки окон оценки.</div>
+          <div className="inline-summary">В графиках и таблицах используются только финальные точки эпох.</div>
           <div className="training-charts" data-testid="training-charts">
             <div className="training-chart">
               <div className="training-chart-title">Score</div>
@@ -983,8 +1000,8 @@ export function TrainingPage() {
             <table className="data-table" data-testid="training-metrics-table">
               <thead>
                 <tr>
-                  <th>Батч</th>
-                  <th>Окно</th>
+                  <th>Итерация</th>
+                  <th>Эпоха</th>
                   <th>Цикл</th>
                   <th>Популяция</th>
                   <th>Счёт</th>
@@ -1043,7 +1060,7 @@ export function TrainingPage() {
 
           {job && (
             <div className="inline-summary">
-              Игры: {job.progress.games_played} | Батчи: {job.progress.batches_done} | Лучший: {job.progress.best_score.toFixed(4)}
+              Игры: {job.progress.games_played} | Итерации: {job.progress.batches_done} | Лучший: {job.progress.best_score.toFixed(4)}
             </div>
           )}
           {job && (

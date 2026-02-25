@@ -51,6 +51,8 @@ export type TrainingLifecycleState =
   | 'Error';
 
 export type TrainingParamsDTO = {
+  games_per_candidate: number;
+  epoch_iters: number;
   microbatch_size: number;
   eval_window_batches: number;
   checkpoint_interval_batches: number;

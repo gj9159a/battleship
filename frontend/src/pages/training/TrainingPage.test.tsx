@@ -32,6 +32,8 @@ const JOB_IDLE = {
     target_adjacent: 0.9,
   },
   params: {
+    games_per_candidate: 100,
+    epoch_iters: 2,
     microbatch_size: 100,
     eval_window_batches: 2,
     checkpoint_interval_batches: 50,

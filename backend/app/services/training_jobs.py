@@ -156,6 +156,9 @@ class TrainingJobService:
                 if state in {"Running", "Pausing", "Stopping"}:
                     state = "Paused"
 
+                params_payload = dict(row["params"])
+                params_payload.setdefault("games_per_candidate", params_payload.get("microbatch_size", 100))
+                params_payload.setdefault("epoch_iters", params_payload.get("eval_window_batches", 2))
                 job = TrainingJob(
                     id=row["id"],
                     ruleset_id=row["ruleset_id"],
@@ -164,7 +167,7 @@ class TrainingJobService:
                     profile_id=row["profile_id"],
                     seed_bot_version_id=row["seed_bot_version_id"],
                     seed=int(row["seed"]),
-                    params=TrainingParams(**row["params"]),
+                    params=TrainingParams(**params_payload),
                     progress=progress,
                     current_weights=normalize_weights(row["current_weights"]),
                     best_weights=normalize_weights(row["best_weights"]),
@@ -205,6 +208,8 @@ class TrainingJobService:
                 "seed_bot_version_id": job.seed_bot_version_id,
                 "seed": job.seed,
                 "params": {
+                    "games_per_candidate": job.params.games_per_candidate,
+                    "epoch_iters": job.params.epoch_iters,
                     "microbatch_size": job.params.microbatch_size,
                     "eval_window_batches": job.params.eval_window_batches,
                     "checkpoint_interval_batches": job.params.checkpoint_interval_batches,
@@ -1346,6 +1351,8 @@ class TrainingJobService:
         payload = {
             "ruleset_id": job.ruleset_id,
             "lookahead_policy_version": "adaptive_v1",
+            "games_per_candidate": job.params.games_per_candidate,
+            "epoch_iters": job.params.epoch_iters,
             "microbatch_size": job.params.microbatch_size,
             "eval_window_batches": job.params.eval_window_batches,
             "population_size": job.progress.current_population_size,

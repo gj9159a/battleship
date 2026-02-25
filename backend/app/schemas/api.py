@@ -114,6 +114,8 @@ class GameSessionResponse(BaseModel):
 
 
 class TrainingParamsDTO(BaseModel):
+    games_per_candidate: int = Field(default=100, gt=0)
+    epoch_iters: int = Field(default=2, gt=0)
     microbatch_size: int = Field(default=100, gt=0)
     eval_window_batches: int = Field(default=2, gt=0)
     checkpoint_interval_batches: int = Field(default=50, gt=0)

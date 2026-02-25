@@ -23,6 +23,8 @@ StageState = Literal[
 
 @dataclass(slots=True)
 class TrainingParams:
+    games_per_candidate: int = 100
+    epoch_iters: int = 2
     microbatch_size: int = 100
     eval_window_batches: int = 2
     checkpoint_interval_batches: int = 50
@@ -44,6 +46,10 @@ class TrainingParams:
     strictness_max_level: int = 3
 
     def __post_init__(self) -> None:
+        if self.games_per_candidate <= 0:
+            raise ValueError("games_per_candidate must be > 0")
+        if self.epoch_iters <= 0:
+            raise ValueError("epoch_iters must be > 0")
         if self.microbatch_size <= 0:
             raise ValueError("microbatch_size must be > 0")
         if self.eval_window_batches <= 0:
@@ -70,6 +76,24 @@ class TrainingParams:
             raise ValueError("meta_plateau_patience_cycles must be > 0")
         if self.strictness_max_level < 0:
             raise ValueError("strictness_max_level must be >= 0")
+        default_games = 100
+        default_epoch_iters = 2
+        default_microbatch = 100
+        default_eval_window = 2
+
+        if self.microbatch_size == default_microbatch and self.games_per_candidate != default_games:
+            self.microbatch_size = int(self.games_per_candidate)
+        elif self.microbatch_size != default_microbatch and self.games_per_candidate == default_games:
+            self.games_per_candidate = int(self.microbatch_size)
+        else:
+            self.games_per_candidate = int(self.microbatch_size)
+
+        if self.eval_window_batches == default_eval_window and self.epoch_iters != default_epoch_iters:
+            self.eval_window_batches = int(self.epoch_iters)
+        elif self.eval_window_batches != default_eval_window and self.epoch_iters == default_epoch_iters:
+            self.epoch_iters = int(self.eval_window_batches)
+        else:
+            self.epoch_iters = int(self.eval_window_batches)
 
 
 @dataclass(slots=True)

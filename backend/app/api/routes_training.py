@@ -29,6 +29,8 @@ def _to_response(job) -> TrainingJobResponse:
         current_weights=dict(job.current_weights),
         best_weights=dict(job.best_weights),
         params=TrainingParamsDTO(
+            games_per_candidate=job.params.games_per_candidate,
+            epoch_iters=job.params.epoch_iters,
             microbatch_size=job.params.microbatch_size,
             eval_window_batches=job.params.eval_window_batches,
             checkpoint_interval_batches=job.params.checkpoint_interval_batches,
@@ -125,7 +127,19 @@ async def create_training_job(
                 )
             seed_weights = dict(seed_bot.weights)
 
-        params = TrainingParams(**payload.params.model_dump()) if payload.params else TrainingParams()
+        if payload.params is None:
+            params = TrainingParams()
+        else:
+            raw_params = payload.params.model_dump(exclude_unset=True)
+            if "games_per_candidate" not in raw_params and "microbatch_size" in raw_params:
+                raw_params["games_per_candidate"] = raw_params["microbatch_size"]
+            if "epoch_iters" not in raw_params and "eval_window_batches" in raw_params:
+                raw_params["epoch_iters"] = raw_params["eval_window_batches"]
+            if "microbatch_size" not in raw_params and "games_per_candidate" in raw_params:
+                raw_params["microbatch_size"] = raw_params["games_per_candidate"]
+            if "eval_window_batches" not in raw_params and "epoch_iters" in raw_params:
+                raw_params["eval_window_batches"] = raw_params["epoch_iters"]
+            params = TrainingParams(**raw_params)
         job = training_jobs.create_job(
             payload.ruleset_id,
             payload.profile_id,
