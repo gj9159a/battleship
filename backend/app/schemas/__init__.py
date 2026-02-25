@@ -33,6 +33,7 @@ from .api import (
     TrainingParamsDTO,
     TrainingProgressDTO,
     TrainingJobResponse,
+    TrainingWindowMetricResponse,
 )
 
 __all__ = [
@@ -70,4 +71,5 @@ __all__ = [
     "TrainingParamsDTO",
     "TrainingProgressDTO",
     "TrainingJobResponse",
+    "TrainingWindowMetricResponse",
 ]

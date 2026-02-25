@@ -217,6 +217,33 @@ class TrainingCheckpointResponse(BaseModel):
     stage_state: str | None
 
 
+class TrainingWindowMetricResponse(BaseModel):
+    batch: int
+    window: int
+    score: float
+    best: float
+    plateau: int
+    cycle: int
+    population_size: int
+    window_evaluated: bool
+    avg_shots_to_sink_all: float
+    p95_shots_to_sink_all: float
+    avg_shots_to_first_hit: float
+    avg_shots_after_first_hit_to_sink_all: float
+    selection_decision_reason: str
+    selection_tiebreak_used: bool
+    selection_noninferiority_passed: bool
+    selection_robust_delta: float
+    selection_attack_delta: float
+    sigma_mean: float
+    sigma_min: float
+    sigma_max: float
+    restart_count: int
+    last_restart_reason: str
+    last_restart_window: int
+    elite_fallback_used: bool
+
+
 class TrainingJobResponse(BaseModel):
     id: str
     ruleset_id: str

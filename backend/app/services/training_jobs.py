@@ -18,7 +18,7 @@ from app.services.frozen_benchmarks import FrozenBenchmarkService
 from app.services.league import LeagueService
 from app.storage import SQLiteStore
 from app.trainer import TrainingParams, TrainingProgress
-from app.trainer.models import LifecycleState, StageState
+from app.trainer.models import LifecycleState, StageState, TrainingWindowMetric
 from app.trainer.simulation import (
     ATTACK_EFFICIENCY_WEIGHTS,
     ATTACK_TIEBREAK_EPSILON,
@@ -378,6 +378,15 @@ class TrainingJobService:
             if job_id not in self._jobs:
                 raise KeyError(f"Unknown training job id={job_id}")
             return []
+
+    def list_window_metrics(self, job_id: str) -> list[dict[str, float | int | str | bool]]:
+        with self._lock:
+            if job_id not in self._jobs:
+                raise KeyError(f"Unknown training job id={job_id}")
+            if self._store is None:
+                return []
+            rows = self._store.load_training_window_metrics(job_id)
+        return [dict(row.payload) for row in rows]
 
     def list_all_checkpoints(self, ruleset_id: str | None = None) -> list[tuple[TrainingJob, dict]]:
         return []
@@ -866,6 +875,67 @@ class TrainingJobService:
         else:
             plateau_triggered = False
 
+        if wr_baseline is not None:
+            self._persist_window_metric_locked(
+                job,
+                {
+                    "batch": int(job.progress.batches_done),
+                    "window": int(job.progress.windows_done),
+                    "score": float(job.progress.last_score),
+                    "best": float(job.progress.best_score),
+                    "plateau": int(job.progress.plateau_windows),
+                    "cycle": int(job.progress.cycle_index),
+                    "population_size": int(job.progress.current_population_size),
+                    "window_evaluated": True,
+                    "avg_shots_to_sink_all": float(avg_shots_to_sink_all or 0.0),
+                    "p95_shots_to_sink_all": float(p95_shots_to_sink_all or 0.0),
+                    "avg_shots_to_first_hit": float(avg_shots_to_first_hit or 0.0),
+                    "avg_shots_after_first_hit_to_sink_all": float(
+                        avg_shots_after_first_hit_to_sink_all or 0.0
+                    ),
+                    "selection_decision_reason": str(
+                        selection_decision_reason or job.progress.selection_decision_reason
+                    ),
+                    "selection_tiebreak_used": bool(
+                        selection_tiebreak_used
+                        if selection_tiebreak_used is not None
+                        else job.progress.selection_tiebreak_used
+                    ),
+                    "selection_noninferiority_passed": bool(
+                        selection_noninferiority_passed
+                        if selection_noninferiority_passed is not None
+                        else job.progress.selection_noninferiority_passed
+                    ),
+                    "selection_robust_delta": float(
+                        selection_robust_delta
+                        if selection_robust_delta is not None
+                        else job.progress.selection_robust_delta
+                    ),
+                    "selection_attack_delta": float(
+                        selection_attack_delta
+                        if selection_attack_delta is not None
+                        else job.progress.selection_attack_delta
+                    ),
+                    "sigma_mean": float(sigma_mean if sigma_mean is not None else job.progress.sigma_mean),
+                    "sigma_min": float(sigma_min if sigma_min is not None else job.progress.sigma_min),
+                    "sigma_max": float(sigma_max if sigma_max is not None else job.progress.sigma_max),
+                    "restart_count": int(
+                        restart_count if restart_count is not None else job.progress.restart_count
+                    ),
+                    "last_restart_reason": str(
+                        last_restart_reason if last_restart_reason is not None else job.progress.last_restart_reason
+                    ),
+                    "last_restart_window": int(
+                        last_restart_window if last_restart_window is not None else job.progress.last_restart_window
+                    ),
+                    "elite_fallback_used": bool(
+                        elite_fallback_used
+                        if elite_fallback_used is not None
+                        else job.progress.elite_fallback_used
+                    ),
+                },
+            )
+
         self._publish_metrics_locked(
             job,
             wr_baseline=wr_baseline,
@@ -934,6 +1004,26 @@ class TrainingJobService:
         job.progress.last_restart_anchor_score = float(search_state["last_restart_anchor_score"])
         job.progress.last_restart_window = int(search_state["last_restart_window"])
         job.progress.elite_fallback_used = bool(search_state["elite_fallback_used"])
+
+    def _persist_window_metric_locked(
+        self,
+        job: TrainingJob,
+        payload: dict[str, float | int | str | bool],
+    ) -> None:
+        if self._store is None:
+            return
+        window_no = int(payload.get("window", 0))
+        if window_no <= 0:
+            return
+        batch_no = int(payload.get("batch", 0))
+        self._store.upsert_training_window_metric(
+            TrainingWindowMetric(
+                job_id=job.id,
+                window_no=window_no,
+                batch_no=batch_no,
+                payload=payload,
+            )
+        )
 
     def _publish_metrics_locked(
         self,

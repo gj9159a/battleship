@@ -168,6 +168,14 @@ class TrainingCheckpoint:
     stage_state: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingWindowMetric:
+    job_id: str
+    window_no: int
+    batch_no: int
+    payload: dict[str, float | int | str | bool]
+
+
 TrainingWeights = dict[str, float]
 
 SuiteKind = Literal["random", "strong"]

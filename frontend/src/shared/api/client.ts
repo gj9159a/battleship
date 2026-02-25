@@ -12,6 +12,7 @@ import type {
   ShotDTO,
   TrainingJobDTO,
   TrainingParamsDTO,
+  TrainingWindowMetricDTO,
 } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -132,6 +133,10 @@ export function createTrainingJob(payload: {
 
 export function getTrainingJob(jobId: string): Promise<TrainingJobDTO> {
   return request<TrainingJobDTO>(`/api/v1/training/jobs/${jobId}`);
+}
+
+export function getTrainingWindowMetrics(jobId: string): Promise<TrainingWindowMetricDTO[]> {
+  return request<TrainingWindowMetricDTO[]>(`/api/v1/training/jobs/${jobId}/windows`);
 }
 
 export function commandTrainingJob(

@@ -78,6 +78,7 @@ const JOB_RUNNING = {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe('TrainingPage', () => {
@@ -102,6 +103,10 @@ describe('TrainingPage', () => {
 
       if (url.endsWith('/api/v1/training/jobs/job-1') && method === 'GET') {
         return new Response(JSON.stringify(JOB_RUNNING), { status: 200 });
+      }
+
+      if (url.endsWith('/api/v1/training/jobs/job-1/windows') && method === 'GET') {
+        return new Response(JSON.stringify([]), { status: 200 });
       }
 
       throw new Error(`Unhandled request: ${url} ${method}`);

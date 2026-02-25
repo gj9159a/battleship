@@ -5,6 +5,7 @@ import {
   commandTrainingJob,
   connectEvents,
   createTrainingJob,
+  getTrainingWindowMetrics,
   getLatestPlacementBiasReport,
   getRulesets,
   getTrainingJob,
@@ -16,11 +17,11 @@ import type {
   RulesetDTO,
   TrainingJobDTO,
   TrainingParamsDTO,
+  TrainingWindowMetricDTO,
 } from '../../shared/api/types';
 
 const RULESETS_RETRY_DELAY_MS = 1000;
 const ACTIVE_JOB_STORAGE_KEY = 'training.active_job_id';
-const METRICS_STORAGE_KEY_PREFIX = 'training.metrics.';
 const DEFAULT_PARAMS: TrainingParamsDTO = {
   games_per_candidate: 128,
   epoch_iters: 5,
@@ -106,6 +107,35 @@ function readBoolean(value: unknown, fallback = false): boolean {
 
 function formatNumber(value: number, digits = 4): string {
   return Number.isFinite(value) ? value.toFixed(digits) : '-';
+}
+
+function mapWindowMetricToPoint(metric: TrainingWindowMetricDTO): MetricPoint {
+  return {
+    batch: readNumber(metric.batch),
+    window: readNumber(metric.window),
+    score: readNumber(metric.score),
+    best: readNumber(metric.best),
+    plateau: readNumber(metric.plateau),
+    cycle: readNumber(metric.cycle),
+    populationSize: readNumber(metric.population_size),
+    windowEvaluated: readBoolean(metric.window_evaluated, true),
+    avgShotsToSinkAll: readNumber(metric.avg_shots_to_sink_all),
+    p95ShotsToSinkAll: readNumber(metric.p95_shots_to_sink_all),
+    avgShotsToFirstHit: readNumber(metric.avg_shots_to_first_hit),
+    avgShotsAfterFirstHitToSinkAll: readNumber(metric.avg_shots_after_first_hit_to_sink_all),
+    selectionDecisionReason: readString(metric.selection_decision_reason, 'unknown'),
+    selectionTiebreakUsed: readBoolean(metric.selection_tiebreak_used),
+    selectionNoninferiorityPassed: readBoolean(metric.selection_noninferiority_passed),
+    selectionRobustDelta: readNumber(metric.selection_robust_delta),
+    selectionAttackDelta: readNumber(metric.selection_attack_delta),
+    sigmaMean: readNumber(metric.sigma_mean),
+    sigmaMin: readNumber(metric.sigma_min),
+    sigmaMax: readNumber(metric.sigma_max),
+    restartCount: readNumber(metric.restart_count),
+    lastRestartReason: readString(metric.last_restart_reason, 'none'),
+    lastRestartWindow: readNumber(metric.last_restart_window, -1),
+    eliteFallbackUsed: readBoolean(metric.elite_fallback_used),
+  };
 }
 
 function buildPolylineScaled(
@@ -226,17 +256,11 @@ export function TrainingPage() {
           return;
         }
         setJob(restored);
-        const raw = window.localStorage.getItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw) as MetricPoint[];
-            if (Array.isArray(parsed)) {
-              setMetrics(parsed.slice(0, 120));
-            }
-          } catch {
-            window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
-          }
+        const rows = await getTrainingWindowMetrics(restored.id);
+        if (cancelled) {
+          return;
         }
+        setMetrics(rows.map(mapWindowMetricToPoint));
         setStatusText(`Восстановлена тренировка (${restored.id}).`);
       } catch {
         window.localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
@@ -322,13 +346,39 @@ export function TrainingPage() {
     }
   }, [job]);
 
+  useEffect(() => {
+    if (!job) {
+      return;
+    }
+    let cancelled = false;
+    const loadHistory = async () => {
+      try {
+        const rows = await getTrainingWindowMetrics(job.id);
+        if (!cancelled) {
+          setMetrics(rows.map(mapWindowMetricToPoint));
+        }
+      } catch {
+        // Ignore temporary API issues, live WS updates will continue.
+      }
+    };
+    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.id]);
+
   async function refreshJob(jobId: string): Promise<TrainingJobDTO> {
     const fresh = await getTrainingJob(jobId);
     setJob(fresh);
     return fresh;
   }
 
-  function upsertMetric(point: MetricPoint, jobId: string) {
+  async function refreshWindowMetrics(jobId: string): Promise<void> {
+    const rows = await getTrainingWindowMetrics(jobId);
+    setMetrics(rows.map(mapWindowMetricToPoint));
+  }
+
+  function upsertMetric(point: MetricPoint) {
     setMetrics((prev) => {
       const currentByBatch = new Map(prev.map((item) => [item.batch, item]));
       const existing = currentByBatch.get(point.batch);
@@ -336,11 +386,7 @@ export function TrainingPage() {
         point = existing;
       }
       currentByBatch.set(point.batch, point);
-      const merged = Array.from(currentByBatch.values())
-        .sort((left, right) => right.batch - left.batch)
-        .slice(0, 120);
-      window.localStorage.setItem(`${METRICS_STORAGE_KEY_PREFIX}${jobId}`, JSON.stringify(merged));
-      return merged;
+      return Array.from(currentByBatch.values()).sort((left, right) => right.batch - left.batch);
     });
   }
 
@@ -354,10 +400,20 @@ export function TrainingPage() {
       return;
     }
 
+    let lastWindowSeen = readNumber(job.progress.windows_done);
     const timer = window.setInterval(() => {
-      void refreshJob(job.id).catch(() => {
-        // Keep previous state on transient polling errors.
-      });
+      void refreshJob(job.id)
+        .then((fresh) => {
+          const windowsDone = readNumber(fresh.progress.windows_done);
+          if (windowsDone > lastWindowSeen) {
+            lastWindowSeen = windowsDone;
+            return refreshWindowMetrics(job.id);
+          }
+          return undefined;
+        })
+        .catch(() => {
+          // Keep previous state on transient polling errors.
+        });
     }, 400);
 
     return () => {
@@ -500,7 +556,7 @@ export function TrainingPage() {
           lastRestartWindow,
           eliteFallbackUsed,
         };
-        upsertMetric(point, job.id);
+        upsertMetric(point);
       }
 
       if (event.event_type === 'job.lifecycle_changed') {
@@ -551,7 +607,6 @@ export function TrainingPage() {
         lastRestartWindow: readNumber(job.progress.last_restart_window, -1),
         eliteFallbackUsed: readBoolean(job.progress.elite_fallback_used),
       },
-      job.id,
     );
   }, [
     job?.id,
@@ -609,7 +664,7 @@ export function TrainingPage() {
     }
     return Array.from(byWindow.values()).sort((left, right) => right.batch - left.batch);
   }, [job?.params.epoch_iters, metrics]);
-  const latestMetrics = useMemo(() => windowMetrics.slice(0, 10), [windowMetrics]);
+  const latestMetrics = useMemo(() => windowMetrics, [windowMetrics]);
   const chartPoints = useMemo(() => windowMetrics.slice(0, 80).reverse(), [windowMetrics]);
   const latestPoint = latestMetrics[0] ?? null;
 
@@ -668,9 +723,6 @@ export function TrainingPage() {
     setIsBusy(true);
     setErrorText(null);
     setMetrics([]);
-    if (job?.id) {
-      window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${job.id}`);
-    }
     setEventLines([]);
     setStageReason('');
 
@@ -683,7 +735,6 @@ export function TrainingPage() {
       const started = await commandTrainingJob(created.id, 'start');
       setJob(started);
       window.localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, started.id);
-      window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${started.id}`);
       setStatusText(`Тренировка запущена (${started.id}).`);
     } catch (error) {
       setErrorText((error as Error).message);

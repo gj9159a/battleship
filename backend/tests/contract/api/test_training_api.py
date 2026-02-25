@@ -100,6 +100,48 @@ def test_training_job_seed_is_random_when_not_provided(client: TestClient) -> No
     assert payload['seed'] > 0
 
 
+def test_training_window_metrics_endpoint_returns_full_epoch_history(client: TestClient) -> None:
+    created = client.post(
+        '/api/v1/training/jobs',
+        json={
+            'ruleset_id': 'classic_v1',
+            'seed': 99,
+            'params': _fast_params(
+                microbatch_size=1,
+                eval_window_batches=1,
+                checkpoint_interval_batches=1000,
+                tick_delay_ms=0,
+            ),
+        },
+    )
+    assert created.status_code == 200
+    job_id = created.json()['id']
+
+    started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
+    assert started.status_code == 200
+
+    running = _wait_for_windows(client, job_id, min_windows=4, timeout=12.0)
+    assert running['lifecycle_state'] == 'Running'
+
+    response = client.get(f'/api/v1/training/jobs/{job_id}/windows')
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) >= 4
+
+    windows = [int(row['window']) for row in rows]
+    assert windows == sorted(windows)
+    assert windows[0] == 1
+    assert windows == list(range(1, windows[-1] + 1))
+
+    for row in rows:
+        assert row['window_evaluated'] is True
+
+    stopping = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'stop'})
+    assert stopping.status_code == 200
+    stopped = _wait_for_state(client, job_id, 'Stopped')
+    assert stopped['stop_reason'] == 'stopped_by_user'
+
+
 def test_training_job_exposes_autoevolve_params_and_progress_fields(client: TestClient) -> None:
     created = client.post(
         '/api/v1/training/jobs',

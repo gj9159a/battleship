@@ -147,6 +147,33 @@ export type TrainingCheckpointDTO = {
   stage_state: string | null;
 };
 
+export type TrainingWindowMetricDTO = {
+  batch: number;
+  window: number;
+  score: number;
+  best: number;
+  plateau: number;
+  cycle: number;
+  population_size: number;
+  window_evaluated: boolean;
+  avg_shots_to_sink_all: number;
+  p95_shots_to_sink_all: number;
+  avg_shots_to_first_hit: number;
+  avg_shots_after_first_hit_to_sink_all: number;
+  selection_decision_reason: string;
+  selection_tiebreak_used: boolean;
+  selection_noninferiority_passed: boolean;
+  selection_robust_delta: number;
+  selection_attack_delta: number;
+  sigma_mean: number;
+  sigma_min: number;
+  sigma_max: number;
+  restart_count: number;
+  last_restart_reason: string;
+  last_restart_window: number;
+  elite_fallback_used: boolean;
+};
+
 export type LeaguePoolType = 'baseline' | 'active' | 'league';
 
 export type LeagueRatingDTO = {

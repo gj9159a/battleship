@@ -6,7 +6,7 @@ from typing import Any
 
 from app.bots.models import BotVersion
 from app.league.models import LeagueRating, LeagueSeason, MatchRecord
-from app.trainer.models import FrozenSuite, FrozenSuiteRun, TrainingCheckpoint
+from app.trainer.models import FrozenSuite, FrozenSuiteRun, TrainingCheckpoint, TrainingWindowMetric
 
 
 class SQLiteStore:
@@ -106,6 +106,19 @@ class SQLiteStore:
                     best_score REAL NOT NULL,
                     stage_state TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS training_window_metrics (
+                    job_id TEXT NOT NULL,
+                    window_no INTEGER NOT NULL,
+                    batch_no INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (job_id, window_no),
+                    FOREIGN KEY (job_id) REFERENCES training_jobs (id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_training_window_metrics_job_batch
+                    ON training_window_metrics (job_id, batch_no DESC);
 
                 CREATE TABLE IF NOT EXISTS frozen_suites (
                     suite_id TEXT PRIMARY KEY,
@@ -512,6 +525,46 @@ class SQLiteStore:
                     checkpoint.stage_state,
                 ),
             )
+
+    def upsert_training_window_metric(self, metric: TrainingWindowMetric) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_window_metrics (
+                    job_id, window_no, batch_no, payload_json
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(job_id, window_no) DO UPDATE SET
+                    batch_no=excluded.batch_no,
+                    payload_json=excluded.payload_json
+                """,
+                (
+                    metric.job_id,
+                    metric.window_no,
+                    metric.batch_no,
+                    self._dumps(metric.payload),
+                ),
+            )
+
+    def load_training_window_metrics(self, job_id: str) -> list[TrainingWindowMetric]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT job_id, window_no, batch_no, payload_json
+                FROM training_window_metrics
+                WHERE job_id = ?
+                ORDER BY window_no ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        return [
+            TrainingWindowMetric(
+                job_id=row["job_id"],
+                window_no=row["window_no"],
+                batch_no=row["batch_no"],
+                payload=dict(self._loads(row["payload_json"])),
+            )
+            for row in rows
+        ]
 
     def load_frozen_suites(self) -> list[FrozenSuite]:
         with self._lock, self._connect() as conn:

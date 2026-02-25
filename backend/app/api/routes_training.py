@@ -8,6 +8,7 @@ from app.schemas import (
     TrainingJobResponse,
     TrainingParamsDTO,
     TrainingProgressDTO,
+    TrainingWindowMetricResponse,
 )
 from app.services.training_jobs import TrainingJobService
 from app.services import BotCatalogService
@@ -165,6 +166,18 @@ async def get_training_job(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _to_response(job)
+
+
+@router.get("/{job_id}/windows", response_model=list[TrainingWindowMetricResponse])
+async def get_training_window_metrics(
+    job_id: str,
+    training_jobs: TrainingJobService = Depends(get_training_jobs),
+) -> list[TrainingWindowMetricResponse]:
+    try:
+        rows = training_jobs.list_window_metrics(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [TrainingWindowMetricResponse(**row) for row in rows]
 
 
 @router.get("/{job_id}/checkpoints", response_model=list[TrainingCheckpointResponse])
