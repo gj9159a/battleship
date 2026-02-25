@@ -33,6 +33,18 @@ def _wait_for_state(client: TestClient, job_id: str, target_state: str, timeout:
     raise AssertionError(f'job {job_id} did not reach state={target_state}')
 
 
+def _wait_for_windows(client: TestClient, job_id: str, min_windows: int, timeout: float = 8.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        response = client.get(f'/api/v1/training/jobs/{job_id}')
+        assert response.status_code == 200
+        payload = response.json()
+        if payload['progress']['windows_done'] >= min_windows:
+            return payload
+        time.sleep(0.02)
+    raise AssertionError(f'job {job_id} did not reach windows_done>={min_windows}')
+
+
 def test_training_job_lifecycle_rest(client: TestClient) -> None:
     created = client.post(
         '/api/v1/training/jobs',
@@ -163,7 +175,7 @@ def test_training_checkpoints_save_and_load(client: TestClient) -> None:
     assert loaded.json()['progress']['games_played'] == checkpoint['games_played']
 
 
-def test_training_adaptive_completion(client: TestClient) -> None:
+def test_training_does_not_auto_complete_on_weak_or_early_plateau(client: TestClient) -> None:
     created = client.post(
         '/api/v1/training/jobs',
         json={
@@ -186,17 +198,17 @@ def test_training_adaptive_completion(client: TestClient) -> None:
     started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
     assert started.status_code == 200
 
-    completed = _wait_for_state(client, job_id, 'Completed', timeout=20.0)
-    assert completed['stage_state'] == 'Finished'
-    assert completed['stop_reason'] in (
-        'strong_found_plateau',
-        'weak_plateau',
-        'plateau_early_stop',
-        'target_reached_plateau',
-    )
+    running = _wait_for_windows(client, job_id, min_windows=6, timeout=25.0)
+    assert running['lifecycle_state'] == 'Running'
+    assert running['stop_reason'] is None
+
+    stopping = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'stop'})
+    assert stopping.status_code == 200
+    stopped = _wait_for_state(client, job_id, 'Stopped')
+    assert stopped['stop_reason'] == 'stopped_by_user'
 
 
-def test_training_early_stop_respects_min_windows_threshold(client: TestClient) -> None:
+def test_training_does_not_auto_complete_when_early_stop_thresholds_are_low(client: TestClient) -> None:
     created = client.post(
         '/api/v1/training/jobs',
         json={
@@ -222,9 +234,14 @@ def test_training_early_stop_respects_min_windows_threshold(client: TestClient) 
     started = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'start'})
     assert started.status_code == 200
 
-    completed = _wait_for_state(client, job_id, 'Completed', timeout=40.0)
-    assert completed['stop_reason'] == 'plateau_early_stop'
-    assert completed['progress']['windows_done'] >= 4
+    running = _wait_for_windows(client, job_id, min_windows=5, timeout=25.0)
+    assert running['lifecycle_state'] == 'Running'
+    assert running['stop_reason'] is None
+
+    stopping = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'stop'})
+    assert stopping.status_code == 200
+    stopped = _wait_for_state(client, job_id, 'Stopped')
+    assert stopped['stop_reason'] == 'stopped_by_user'
 
 
 def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient) -> None:

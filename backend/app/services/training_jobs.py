@@ -1717,26 +1717,6 @@ class TrainingJobService:
             job.stop_reason = "strong_found_plateau"
             return True
 
-        weak_window = max(4, job.params.plateau_patience_windows)
-        if (
-            job.progress.windows_done >= weak_window
-            and job.progress.best_score < 0.52
-            and job.progress.plateau_windows >= job.params.plateau_patience_windows
-        ):
-            job.stop_reason = "weak_plateau"
-            return True
-
-        if (
-            job.progress.windows_done >= job.params.min_windows_before_early_stop
-            and job.progress.plateau_windows >= job.params.early_stop_plateau_windows
-        ):
-            job.stop_reason = "plateau_early_stop"
-            return True
-
-        if job.progress.last_score >= job.params.target_score and job.progress.plateau_windows >= 3:
-            job.stop_reason = "target_reached_plateau"
-            return True
-
         return False
 
     def _get_checkpoint_locked(self, job_id: str, checkpoint_id: str) -> TrainingCheckpoint:
