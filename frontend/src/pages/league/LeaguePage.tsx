@@ -167,6 +167,19 @@ export function LeaguePage() {
   const canStop = season ? ['Running', 'Pausing', 'Paused'].includes(season.lifecycle_state) : false;
 
   const top16 = useMemo(() => table.filter((row) => row.pool_type === 'league').slice(0, 16), [table]);
+  const topMatchupsByGames = useMemo(
+    () =>
+      [...matrix]
+        .sort(
+          (left, right) =>
+            right.total - left.total ||
+            right.wins_a + right.wins_b - (left.wins_a + left.wins_b) ||
+            left.bot_a_id.localeCompare(right.bot_a_id) ||
+            left.bot_b_id.localeCompare(right.bot_b_id),
+        )
+        .slice(0, 50),
+    [matrix],
+  );
 
   async function onRegisterBot() {
     if (!botVersionId || isBusy) {
@@ -389,7 +402,7 @@ export function LeaguePage() {
         </section>
 
         <section className="panel">
-          <h3>Матрица матчапов</h3>
+          <h3>Матрица матчапов (топ-50 по числу игр)</h3>
           <table className="data-table" data-testid="league-matrix-table">
             <thead>
               <tr>
@@ -401,7 +414,7 @@ export function LeaguePage() {
               </tr>
             </thead>
             <tbody>
-              {matrix.slice(0, 20).map((cell) => (
+              {topMatchupsByGames.map((cell) => (
                 <tr key={`${cell.bot_a_id}-${cell.bot_b_id}`}>
                   <td>{cell.bot_a_id}</td>
                   <td>{cell.bot_b_id}</td>

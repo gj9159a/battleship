@@ -9,6 +9,11 @@ from app.rulesets.models import Ruleset
 
 LookaheadMode = Literal["off", "depth1", "depth2", "adaptive"]
 
+LOOKAHEAD_TOP_K = 12
+TARGET_FRONTIER_DEPTH2_RATIO = 0.20
+HUNT_DEPTH2_MAX_REMAINING = 40
+HUNT_DEPTH2_MIN_MAX_PROB = 0.28
+
 
 @dataclass(frozen=True, slots=True)
 class StrongBotConfig:
@@ -80,6 +85,8 @@ class StrongBotPolicy:
         self._hits_pending: set[Coord] = set()
         self._hits_sunk: set[Coord] = set()
         self._remaining_fleet: list[int] = sorted(ruleset.fleet)
+        self._neighbors_by_cell = self._precompute_neighbors()
+        self._placements_by_length = self._precompute_placements()
 
     def select_shot(self) -> Coord:
         available = [
@@ -105,23 +112,38 @@ class StrongBotPolicy:
             target_hits=len(self._hits_pending),
         )
 
-        scored: list[tuple[float, Coord]] = []
+        scored_base: list[tuple[float, Coord, float]] = []
         for cell in candidates:
-            base_score = self._base_score(cell, heat=heat, target_mode=target_mode)
+            score = self._base_score(cell, heat=heat, target_mode=target_mode)
             probability = 0.0
             if total_heat > 0:
                 probability = max(0.0, heat.get(cell, 0.0)) / total_heat
 
             if depth >= 1:
-                base_score += self._weights["lookahead_hit"] * probability
-
-            if depth >= 2:
-                neighborhood = self._neighbor_average_heat(cell, heat)
-                frontier_focus = 1.0 / max(1, len(candidates))
-                base_score += self._weights["lookahead_depth2"] * probability * neighborhood * (1.0 + frontier_focus)
+                score += self._weights["lookahead_hit"] * probability
 
             tie_noise = self._rng.random() * 1e-9
-            scored.append((base_score + tie_noise, cell))
+            scored_base.append((score + tie_noise, cell, probability))
+
+        if depth >= 2:
+            top_k = min(LOOKAHEAD_TOP_K, len(scored_base))
+            top_cells = {
+                cell
+                for _, cell, _ in sorted(
+                    scored_base,
+                    key=lambda item: item[0],
+                    reverse=True,
+                )[:top_k]
+            }
+            frontier_focus = 1.0 / max(1, len(candidates))
+            scored = []
+            for score, cell, probability in scored_base:
+                if cell in top_cells:
+                    neighborhood = self._neighbor_average_heat(cell, heat)
+                    score += self._weights["lookahead_depth2"] * probability * neighborhood * (1.0 + frontier_focus)
+                scored.append((score, cell))
+        else:
+            scored = [(score, cell) for score, cell, _ in scored_base]
 
         scored.sort(key=lambda item: item[0], reverse=True)
         shot = scored[0][1]
@@ -148,6 +170,10 @@ class StrongBotPolicy:
     def _candidate_cells(self, available: list[Coord], target_mode: bool) -> list[Coord]:
         if not target_mode:
             return available
+
+        line_frontier = self._line_frontier_candidates()
+        if line_frontier:
+            return line_frontier
 
         frontier: set[Coord] = set()
         for cell in self._hits_pending:
@@ -199,13 +225,16 @@ class StrongBotPolicy:
         if target_mode and (target_hits >= 2 or aligned):
             return 2
 
-        if target_mode and target_hits >= 1 and target_candidates <= max(6, self._size // 2):
+        if target_mode and target_hits >= 1:
+            frontier_ratio = target_candidates / max(1, remaining_cells)
+            if frontier_ratio <= TARGET_FRONTIER_DEPTH2_RATIO:
+                return 2
+            return 1
+
+        if remaining_cells <= HUNT_DEPTH2_MAX_REMAINING and max_prob >= HUNT_DEPTH2_MIN_MAX_PROB:
             return 2
 
-        if remaining_cells <= max(40, self._size * self._size // 2) and max_prob >= 0.12:
-            return 2
-
-        if max_prob >= 0.24:
+        if max_prob >= 0.40:
             return 2
 
         return 1
@@ -214,23 +243,18 @@ class StrongBotPolicy:
         heat: dict[Coord, float] = {}
         target_hits = set(self._hits_pending)
         for length in self._remaining_fleet:
-            for orientation in ("H", "V"):
-                row_limit = self._size if orientation == "H" else self._size - length + 1
-                col_limit = self._size - length + 1 if orientation == "H" else self._size
-                for row in range(row_limit):
-                    for col in range(col_limit):
-                        cells = self._placement_cells(row, col, length, orientation)
-                        if any(cell in self._misses for cell in cells):
-                            continue
-                        if any(cell in self._hits_sunk for cell in cells):
-                            continue
-                        if target_mode and target_hits and not any(cell in target_hits for cell in cells):
-                            continue
+            for cells in self._placements_by_length[length]:
+                if any(cell in self._misses for cell in cells):
+                    continue
+                if any(cell in self._hits_sunk for cell in cells):
+                    continue
+                if target_mode and target_hits and not any(cell in target_hits for cell in cells):
+                    continue
 
-                        for cell in cells:
-                            if cell in self._fired:
-                                continue
-                            heat[cell] = heat.get(cell, 0.0) + 1.0
+                for cell in cells:
+                    if cell in self._fired:
+                        continue
+                    heat[cell] = heat.get(cell, 0.0) + 1.0
 
         if not heat:
             for row in range(self._size):
@@ -264,6 +288,30 @@ class StrongBotPolicy:
         cols = {col for _, col in self._hits_pending}
         return len(rows) == 1 or len(cols) == 1
 
+    def _line_frontier_candidates(self) -> list[Coord]:
+        if len(self._hits_pending) < 2:
+            return []
+        rows = {row for row, _ in self._hits_pending}
+        cols = {col for _, col in self._hits_pending}
+
+        if len(rows) == 1:
+            row = next(iter(rows))
+            ordered_cols = sorted(col for _, col in self._hits_pending)
+            cells = [(row, ordered_cols[0] - 1), (row, ordered_cols[-1] + 1)]
+            return [cell for cell in cells if self._is_available(cell)]
+
+        if len(cols) == 1:
+            col = next(iter(cols))
+            ordered_rows = sorted(row for row, _ in self._hits_pending)
+            cells = [(ordered_rows[0] - 1, col), (ordered_rows[-1] + 1, col)]
+            return [cell for cell in cells if self._is_available(cell)]
+
+        return []
+
+    def _is_available(self, cell: Coord) -> bool:
+        row, col = cell
+        return 0 <= row < self._size and 0 <= col < self._size and cell not in self._fired
+
     def _neighbor_average_heat(self, cell: Coord, heat: dict[Coord, float]) -> float:
         values = [heat.get(neighbor, 0.0) for neighbor in self._orthogonal_neighbors(cell)]
         if not values:
@@ -296,11 +344,31 @@ class StrongBotPolicy:
             return tuple((row, col + offset) for offset in range(length))
         return tuple((row + offset, col) for offset in range(length))
 
+    def _precompute_placements(self) -> dict[int, tuple[tuple[Coord, ...], ...]]:
+        cached: dict[int, tuple[tuple[Coord, ...], ...]] = {}
+        for length in sorted(set(self._ruleset.fleet)):
+            placements: list[tuple[Coord, ...]] = []
+            for orientation in ("H", "V"):
+                row_limit = self._size if orientation == "H" else self._size - length + 1
+                col_limit = self._size - length + 1 if orientation == "H" else self._size
+                for row in range(row_limit):
+                    for col in range(col_limit):
+                        placements.append(self._placement_cells(row, col, length, orientation))
+            cached[length] = tuple(placements)
+        return cached
+
+    def _precompute_neighbors(self) -> dict[Coord, tuple[Coord, ...]]:
+        neighbors: dict[Coord, tuple[Coord, ...]] = {}
+        for row in range(self._size):
+            for col in range(self._size):
+                cell = (row, col)
+                items: list[Coord] = []
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = row + dr, col + dc
+                    if 0 <= nr < self._size and 0 <= nc < self._size:
+                        items.append((nr, nc))
+                neighbors[cell] = tuple(items)
+        return neighbors
+
     def _orthogonal_neighbors(self, cell: Coord) -> tuple[Coord, ...]:
-        row, col = cell
-        result: list[Coord] = []
-        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            nr, nc = row + dr, col + dc
-            if 0 <= nr < self._size and 0 <= nc < self._size:
-                result.append((nr, nc))
-        return tuple(result)
+        return self._neighbors_by_cell[cell]

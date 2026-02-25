@@ -1,6 +1,6 @@
 import random
 
-from app.bots.policy import StrongBotPolicy
+from app.bots.policy import StrongBotConfig, StrongBotPolicy
 from app.bots.selfplay import SelfPlaySimulator
 from app.rulesets.catalog import CLASSIC_V1
 from app.trainer.simulation import WindowMetrics
@@ -165,3 +165,38 @@ def test_self_play_simulator_reports_attack_efficiency_metrics() -> None:
     assert metrics.avg_shots_to_first_hit > 0
     assert metrics.avg_shots_after_first_hit_to_sink_all >= 0
     assert metrics.avg_misses_before_first_hit >= 0
+
+
+def test_strong_bot_depth2_applies_only_top_k_neighbors(monkeypatch) -> None:
+    bot = StrongBotPolicy(
+        CLASSIC_V1,
+        rng=random.Random(77),
+        config=StrongBotConfig(lookahead_mode="depth2", lookahead_policy_version="adaptive_v1"),
+    )
+
+    calls = 0
+    original = bot._neighbor_average_heat
+
+    def wrapped(cell, heat):
+        nonlocal calls
+        calls += 1
+        return original(cell, heat)
+
+    monkeypatch.setattr(bot, "_neighbor_average_heat", wrapped)
+    bot.select_shot()
+    assert calls <= 12
+
+
+def test_strong_bot_fast_target_mode_uses_line_frontier() -> None:
+    bot = StrongBotPolicy(CLASSIC_V1, rng=random.Random(101))
+    bot._fired = {(4, 4), (4, 5)}
+    bot._hits_pending = {(4, 4), (4, 5)}
+
+    available = [
+        (row, col)
+        for row in range(CLASSIC_V1.board_size)
+        for col in range(CLASSIC_V1.board_size)
+        if (row, col) not in bot._fired
+    ]
+    candidates = set(bot._candidate_cells(available, target_mode=True))
+    assert candidates == {(4, 3), (4, 6)}
