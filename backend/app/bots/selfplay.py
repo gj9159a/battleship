@@ -444,8 +444,6 @@ def _wilson_lower_bound(*, wins: int, total: int, z: float = 1.96) -> float:
 class SelfPlaySimulator:
     _ELITE_FRACTION = 0.25
     _SEARCH_POLICY = "sep_cma_es_lite_v1"
-    _WEIGHT_MISS_MIN = -3.0
-    _WEIGHT_MISS_MAX = 0.0
     _WEIGHT_OTHER_MIN = 0.0
     _WEIGHT_OTHER_MAX = 3.0
     _CMA_TINY = 1e-12
@@ -1070,8 +1068,7 @@ class SelfPlaySimulator:
 
     @classmethod
     def _weight_bounds(cls, key: str) -> tuple[float, float]:
-        if key == "lookahead_miss":
-            return cls._WEIGHT_MISS_MIN, cls._WEIGHT_MISS_MAX
+        del key
         return cls._WEIGHT_OTHER_MIN, cls._WEIGHT_OTHER_MAX
 
     @classmethod

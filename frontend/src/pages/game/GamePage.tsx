@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { createGameSession, getGameSession, getRulesets, shoot } from '../../shared/api/client';
 import type { GameSessionDTO, RulesetDTO, ShotDTO } from '../../shared/api/types';
-import { makeBotCellOrder, OPPONENT_TEMPLATE, PLAYER_TEMPLATE, shipCells } from './placementTemplates';
+import { shipCells } from './placementTemplates';
 
 function cellKey(row: number, col: number): string {
   return `${row}:${col}`;
@@ -15,7 +15,6 @@ export function GamePage() {
   const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [isBusy, setIsBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [botCursor, setBotCursor] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -42,7 +41,7 @@ export function GamePage() {
     };
   }, []);
 
-  const playerShips = useMemo(() => shipCells(PLAYER_TEMPLATE), []);
+  const playerShips = useMemo(() => shipCells(session?.player_placements ?? []), [session?.player_placements]);
 
   const shotIndex = useMemo(() => {
     const map = new Map<string, ShotDTO>();
@@ -80,13 +79,13 @@ export function GamePage() {
       setErrorText(null);
       const created = await createGameSession({
         ruleset_id: selectedRulesetId,
-        player_placements: PLAYER_TEMPLATE,
-        opponent_placements: OPPONENT_TEMPLATE,
-        first_player: 0,
       });
       setSession(created);
-      setBotCursor(0);
-      setStatusText('Игра началась. Ход игрока.');
+      if (created.current_player === 1) {
+        await runOpponentTurns(created);
+      } else {
+        setStatusText('Игра началась. Ход игрока.');
+      }
     } catch (error) {
       setErrorText((error as Error).message);
       setStatusText('Ошибка старта игры.');
@@ -96,22 +95,17 @@ export function GamePage() {
   }
 
   async function runOpponentTurns(current: GameSessionDTO) {
-    const queue = makeBotCellOrder(10, current.id);
-    let cursor = botCursor;
     let latest = current;
     setStatusText('Ход бота...');
 
-    while (latest.current_player === 1 && latest.lifecycle_state === 'running' && cursor < queue.length) {
-      const [row, col] = queue[cursor];
-      cursor += 1;
-      const attempt = await shoot(latest.id, row, col);
+    while (latest.current_player === 1 && latest.lifecycle_state === 'running') {
+      const attempt = await shoot(latest.id, 0, 0);
       latest = await reloadSession(latest.id);
       if (attempt.game_over) {
         break;
       }
     }
 
-    setBotCursor(cursor);
     if (latest.lifecycle_state === 'completed') {
       setStatusText(latest.winner === 0 ? 'Победа игрока.' : 'Победа бота.');
       return;

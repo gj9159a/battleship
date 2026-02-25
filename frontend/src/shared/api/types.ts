@@ -37,6 +37,8 @@ export type GameSessionDTO = {
   lifecycle_state: 'running' | 'completed';
   current_player: number;
   winner: number | null;
+  player_placements: Placement[];
+  opponent_bot_version_id: string | null;
   shots: ShotDTO[];
 };
 
@@ -119,6 +121,9 @@ export type TrainingProgressDTO = {
   last_restart_anchor_score?: number;
   last_restart_window?: number;
   elite_fallback_used?: boolean;
+  last_promotion_tested?: boolean;
+  last_promotion_passed?: boolean;
+  last_promotion_rank?: number;
   frozen_suite_summaries?: Record<string, FrozenSuiteSummaryDTO>;
 };
 
@@ -172,6 +177,9 @@ export type TrainingWindowMetricDTO = {
   last_restart_reason: string;
   last_restart_window: number;
   elite_fallback_used: boolean;
+  promotion_tested?: boolean;
+  promotion_passed?: boolean;
+  promotion_rank?: number;
 };
 
 export type LeaguePoolType = 'baseline' | 'active' | 'league';

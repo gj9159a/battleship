@@ -135,6 +135,9 @@ def test_training_window_metrics_endpoint_returns_full_epoch_history(client: Tes
 
     for row in rows:
         assert row['window_evaluated'] is True
+        assert 'promotion_tested' in row
+        assert 'promotion_passed' in row
+        assert 'promotion_rank' in row
 
     stopping = client.post(f'/api/v1/training/jobs/{job_id}/commands', json={'command': 'stop'})
     assert stopping.status_code == 200
@@ -195,6 +198,9 @@ def test_training_job_exposes_autoevolve_params_and_progress_fields(client: Test
     assert 'last_restart_anchor_score' in payload['progress']
     assert 'last_restart_window' in payload['progress']
     assert 'elite_fallback_used' in payload['progress']
+    assert 'last_promotion_tested' in payload['progress']
+    assert 'last_promotion_passed' in payload['progress']
+    assert 'last_promotion_rank' in payload['progress']
 
 
 def test_training_checkpoints_save_and_load(client: TestClient) -> None:

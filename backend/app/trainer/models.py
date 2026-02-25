@@ -154,6 +154,9 @@ class TrainingProgress:
     last_restart_anchor_score: float = 0.0
     last_restart_window: int = -1
     elite_fallback_used: bool = False
+    last_promotion_tested: bool = False
+    last_promotion_passed: bool = False
+    last_promotion_rank: int = -1
     frozen_suite_summaries: dict[str, dict[str, object]] = field(default_factory=dict)
 
 

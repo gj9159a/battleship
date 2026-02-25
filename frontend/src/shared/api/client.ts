@@ -6,7 +6,6 @@ import type {
   LeaguePoolType,
   LeagueRatingDTO,
   LeagueSeasonDTO,
-  Placement,
   PlacementBiasReportDTO,
   RulesetDTO,
   ShotDTO,
@@ -97,9 +96,7 @@ export function getBackendHealth(): Promise<{ status: string; service: string; t
 
 export function createGameSession(payload: {
   ruleset_id: string;
-  player_placements: Placement[];
-  opponent_placements: Placement[];
-  first_player: 0 | 1;
+  first_player?: 0 | 1;
 }): Promise<GameSessionDTO> {
   return request<GameSessionDTO>('/api/v1/game/sessions', {
     method: 'POST',

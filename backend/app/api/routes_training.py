@@ -107,6 +107,9 @@ def _to_response(job) -> TrainingJobResponse:
             last_restart_anchor_score=job.progress.last_restart_anchor_score,
             last_restart_window=job.progress.last_restart_window,
             elite_fallback_used=job.progress.elite_fallback_used,
+            last_promotion_tested=job.progress.last_promotion_tested,
+            last_promotion_passed=job.progress.last_promotion_passed,
+            last_promotion_rank=job.progress.last_promotion_rank,
             frozen_suite_summaries=dict(job.progress.frozen_suite_summaries),
         ),
     )

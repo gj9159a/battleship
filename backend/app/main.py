@@ -50,9 +50,12 @@ def create_app(*, data_root: Path | None = None, enable_frozen_benchmarks: bool 
     event_bus = EventBus()
     app.state.event_bus = event_bus
     app.state.store = store
-    app.state.game_sessions = GameSessionService()
     app.state.bot_catalog = BotCatalogService(store=store)
     app.state.league_service = LeagueService(event_bus=event_bus, store=store, bot_catalog=app.state.bot_catalog)
+    app.state.game_sessions = GameSessionService(
+        bot_catalog=app.state.bot_catalog,
+        league_service=app.state.league_service,
+    )
     app.state.frozen_benchmarks = (
         FrozenBenchmarkService(store=store, bot_catalog=app.state.bot_catalog)
         if enable_frozen_benchmarks

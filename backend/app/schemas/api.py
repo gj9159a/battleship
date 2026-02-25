@@ -83,9 +83,7 @@ class PlacementDTO(BaseModel):
 
 class GameSessionCreateRequest(BaseModel):
     ruleset_id: str
-    player_placements: list[PlacementDTO]
-    opponent_placements: list[PlacementDTO]
-    first_player: Literal[0, 1] = 0
+    first_player: Literal[0, 1] | None = None
 
 
 class ShotRequest(BaseModel):
@@ -110,6 +108,8 @@ class GameSessionResponse(BaseModel):
     lifecycle_state: Literal["running", "completed"]
     current_player: int
     winner: int | None
+    player_placements: list[PlacementDTO]
+    opponent_bot_version_id: str | None
     shots: list[ShotResponse]
 
 
@@ -204,6 +204,9 @@ class TrainingProgressDTO(BaseModel):
     last_restart_anchor_score: float
     last_restart_window: int
     elite_fallback_used: bool
+    last_promotion_tested: bool
+    last_promotion_passed: bool
+    last_promotion_rank: int
     frozen_suite_summaries: dict[str, dict[str, object]]
 
 
@@ -242,6 +245,9 @@ class TrainingWindowMetricResponse(BaseModel):
     last_restart_reason: str
     last_restart_window: int
     elite_fallback_used: bool
+    promotion_tested: bool = False
+    promotion_passed: bool = False
+    promotion_rank: int = -1
 
 
 class TrainingJobResponse(BaseModel):

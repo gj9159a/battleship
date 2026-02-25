@@ -24,7 +24,6 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "target_line": 0.48,
     "target_heat": 0.82,
     "lookahead_hit": 0.72,
-    "lookahead_miss": -0.06,
     "lookahead_depth2": 0.44,
 }
 
@@ -116,7 +115,6 @@ class StrongBotPolicy:
 
             if depth >= 1:
                 base_score += self._weights["lookahead_hit"] * probability
-                base_score += self._weights["lookahead_miss"] * (1.0 - probability)
 
             if depth >= 2:
                 neighborhood = self._neighbor_average_heat(cell, heat)

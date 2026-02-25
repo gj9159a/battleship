@@ -3,8 +3,7 @@ from app.bots.selfplay import SelfPlaySimulator
 
 
 def _clip_expected(key: str, value: float) -> float:
-    if key == "lookahead_miss":
-        return round(max(-3.0, min(0.0, value)), 6)
+    del key
     return round(max(0.0, min(3.0, value)), 6)
 
 

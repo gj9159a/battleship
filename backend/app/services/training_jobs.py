@@ -37,6 +37,13 @@ class _StrongMatchTask:
     first_player: int
 
 
+@dataclass(frozen=True, slots=True)
+class _PromotionAttemptResult:
+    attempted: bool
+    passed: bool
+    rank: int
+
+
 def _run_strong_match_task(task: _StrongMatchTask) -> int:
     ruleset = get_ruleset(task.ruleset_id)
     rng = random.Random(task.seed)
@@ -175,6 +182,9 @@ class TrainingJobService:
                     last_restart_anchor_score=float(progress_payload.get("last_restart_anchor_score", 0.0)),
                     last_restart_window=int(progress_payload.get("last_restart_window", -1)),
                     elite_fallback_used=bool(progress_payload.get("elite_fallback_used", False)),
+                    last_promotion_tested=bool(progress_payload.get("last_promotion_tested", False)),
+                    last_promotion_passed=bool(progress_payload.get("last_promotion_passed", False)),
+                    last_promotion_rank=int(progress_payload.get("last_promotion_rank", -1)),
                     frozen_suite_summaries=dict(progress_payload.get("frozen_suite_summaries", {})),
                 )
                 state = row["lifecycle_state"]
@@ -312,6 +322,9 @@ class TrainingJobService:
                     "last_restart_anchor_score": job.progress.last_restart_anchor_score,
                     "last_restart_window": job.progress.last_restart_window,
                     "elite_fallback_used": job.progress.elite_fallback_used,
+                    "last_promotion_tested": job.progress.last_promotion_tested,
+                    "last_promotion_passed": job.progress.last_promotion_passed,
+                    "last_promotion_rank": job.progress.last_promotion_rank,
                     "frozen_suite_summaries": dict(job.progress.frozen_suite_summaries),
                 },
                 "current_weights": dict(job.current_weights),
@@ -635,6 +648,9 @@ class TrainingJobService:
         last_restart_anchor_score: float | None = None
         last_restart_window: int | None = None
         elite_fallback_used: bool | None = None
+        promotion_tested: bool | None = None
+        promotion_passed: bool | None = None
+        promotion_rank: int | None = None
         needs_window_eval = (job.progress.batches_done % job.params.eval_window_batches) == 0
 
         if needs_window_eval:
@@ -700,6 +716,9 @@ class TrainingJobService:
                 last_restart_anchor_score=None,
                 last_restart_window=None,
                 elite_fallback_used=None,
+                promotion_tested=None,
+                promotion_passed=None,
+                promotion_rank=None,
                 window_evaluated=False,
             )
 
@@ -868,7 +887,13 @@ class TrainingJobService:
                 promoted_to_top16 = self._maybe_auto_promote_weights_locked(
                     job, runtime, dict(job.best_weights), force=True
                 )
-                if promoted_to_top16:
+                promotion_tested = promoted_to_top16.attempted
+                promotion_passed = promoted_to_top16.passed
+                promotion_rank = promoted_to_top16.rank
+                job.progress.last_promotion_tested = promoted_to_top16.attempted
+                job.progress.last_promotion_passed = promoted_to_top16.passed
+                job.progress.last_promotion_rank = promoted_to_top16.rank
+                if promoted_to_top16.passed:
                     job.progress.plateau_windows = 0
                 else:
                     plateau_triggered = self._handle_plateau_autoevolve_locked(job, runtime)
@@ -933,6 +958,21 @@ class TrainingJobService:
                         if elite_fallback_used is not None
                         else job.progress.elite_fallback_used
                     ),
+                    "promotion_tested": bool(
+                        promotion_tested
+                        if promotion_tested is not None
+                        else job.progress.last_promotion_tested
+                    ),
+                    "promotion_passed": bool(
+                        promotion_passed
+                        if promotion_passed is not None
+                        else job.progress.last_promotion_passed
+                    ),
+                    "promotion_rank": int(
+                        promotion_rank
+                        if promotion_rank is not None
+                        else job.progress.last_promotion_rank
+                    ),
                 },
             )
 
@@ -980,6 +1020,9 @@ class TrainingJobService:
             last_restart_anchor_score=last_restart_anchor_score,
             last_restart_window=last_restart_window,
             elite_fallback_used=elite_fallback_used,
+            promotion_tested=promotion_tested,
+            promotion_passed=promotion_passed,
+            promotion_rank=promotion_rank,
             window_evaluated=wr_baseline is not None,
         )
 
@@ -1071,6 +1114,9 @@ class TrainingJobService:
         last_restart_anchor_score: float | None,
         last_restart_window: int | None,
         elite_fallback_used: bool | None,
+        promotion_tested: bool | None,
+        promotion_passed: bool | None,
+        promotion_rank: int | None,
         window_evaluated: bool,
     ) -> None:
         self._event_bus.publish_sync(
@@ -1207,6 +1253,21 @@ class TrainingJobService:
                     if elite_fallback_used is not None
                     else job.progress.elite_fallback_used
                 ),
+                "promotion_tested": (
+                    promotion_tested
+                    if promotion_tested is not None
+                    else job.progress.last_promotion_tested
+                ),
+                "promotion_passed": (
+                    promotion_passed
+                    if promotion_passed is not None
+                    else job.progress.last_promotion_passed
+                ),
+                "promotion_rank": (
+                    promotion_rank
+                    if promotion_rank is not None
+                    else job.progress.last_promotion_rank
+                ),
                 "frozen_suite_summaries": dict(job.progress.frozen_suite_summaries),
             },
         )
@@ -1285,15 +1346,15 @@ class TrainingJobService:
         weights: dict[str, float],
         *,
         force: bool = False,
-    ) -> bool:
+    ) -> _PromotionAttemptResult:
         if self._bot_catalog is None or self._league_service is None:
-            return False
+            return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
 
         if not force and (job.progress.windows_done - runtime.last_auto_promote_window) < self._PROMOTE_EVERY_WINDOWS:
-            return False
+            return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
         runtime.last_auto_promote_window = job.progress.windows_done
         if not weights:
-            return False
+            return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
 
         protocol_hash_before = job.progress.eval_protocol_hash
         if not protocol_hash_before:
@@ -1315,7 +1376,7 @@ class TrainingJobService:
                 tags={"active", f"eval_protocol:{protocol_hash_before}"},
             )
         except ValueError:
-            return False
+            return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
 
         runtime.last_auto_promote_window = job.progress.windows_done
         self._league_service.register_bot(job.ruleset_id, bot.bot_version_id, "active")
@@ -1348,7 +1409,12 @@ class TrainingJobService:
             },
         )
         self._maybe_rebench_league_mismatch_locked(job)
-        return self._is_bot_in_league_top16_locked(job.ruleset_id, bot.bot_version_id)
+        rank = self._bot_rank_locked(job.ruleset_id, bot.bot_version_id)
+        return _PromotionAttemptResult(
+            attempted=True,
+            passed=self._is_bot_in_league_top16_locked(job.ruleset_id, bot.bot_version_id),
+            rank=rank,
+        )
 
     def _is_bot_in_league_top16_locked(self, ruleset_id: str, bot_version_id: str) -> bool:
         if self._league_service is None:
@@ -1359,6 +1425,19 @@ class TrainingJobService:
             return False
         top16 = [row.bot_version_id for row in table if row.pool_type == "league"][:16]
         return bot_version_id in top16
+
+    def _bot_rank_locked(self, ruleset_id: str, bot_version_id: str) -> int:
+        if self._league_service is None:
+            return -1
+        try:
+            table = self._league_service.list_table(ruleset_id)
+        except KeyError:
+            return -1
+        ranked = [row for row in table if row.pool_type != "baseline"]
+        for index, row in enumerate(ranked, start=1):
+            if row.bot_version_id == bot_version_id:
+                return index
+        return -1
 
     def _run_strong_matches(self, tasks: list[_StrongMatchTask], *, worker_count: int) -> list[int]:
         if not tasks:
@@ -1559,10 +1638,7 @@ class TrainingJobService:
             "search_cma_sigma_max": 0.45,
             "search_cma_diag_min": 0.05,
             "search_cma_diag_max": 4.0,
-            "search_weight_bounds": {
-                "lookahead_miss": [-3.0, 0.0],
-                "default": [0.0, 3.0],
-            },
+            "search_weight_bounds": {"default": [0.0, 3.0]},
             "search_restart_semantics": "plateau_anchor_reseed_v1",
             "search_restart_sigma": 0.12,
             "search_restart_max_count": 3,

@@ -75,6 +75,9 @@ type MetricPoint = {
   lastRestartReason: string;
   lastRestartWindow: number;
   eliteFallbackUsed: boolean;
+  promotionTested: boolean;
+  promotionPassed: boolean;
+  promotionRank: number;
 };
 
 type FrozenSummaryRow = {
@@ -135,6 +138,9 @@ function mapWindowMetricToPoint(metric: TrainingWindowMetricDTO): MetricPoint {
     lastRestartReason: readString(metric.last_restart_reason, 'none'),
     lastRestartWindow: readNumber(metric.last_restart_window, -1),
     eliteFallbackUsed: readBoolean(metric.elite_fallback_used),
+    promotionTested: readBoolean(metric.promotion_tested),
+    promotionPassed: readBoolean(metric.promotion_passed),
+    promotionRank: readNumber(metric.promotion_rank, -1),
   };
 }
 
@@ -488,6 +494,9 @@ export function TrainingPage() {
         const lastRestartReason = readString(event.payload.last_restart_reason, 'none');
         const lastRestartWindow = readNumber(event.payload.last_restart_window, -1);
         const eliteFallbackUsed = readBoolean(event.payload.elite_fallback_used);
+        const promotionTested = readBoolean(event.payload.promotion_tested);
+        const promotionPassed = readBoolean(event.payload.promotion_passed);
+        const promotionRank = readNumber(event.payload.promotion_rank, -1);
         const frozenSuiteSummaries = (event.payload.frozen_suite_summaries ?? {}) as Record<string, FrozenSuiteSummaryDTO>;
 
         setJob((prev) => {
@@ -525,6 +534,9 @@ export function TrainingPage() {
               last_restart_reason: lastRestartReason,
               last_restart_window: lastRestartWindow,
               elite_fallback_used: eliteFallbackUsed,
+              last_promotion_tested: promotionTested,
+              last_promotion_passed: promotionPassed,
+              last_promotion_rank: promotionRank,
               frozen_suite_summaries: frozenSuiteSummaries,
             },
           };
@@ -555,6 +567,9 @@ export function TrainingPage() {
           lastRestartReason,
           lastRestartWindow,
           eliteFallbackUsed,
+          promotionTested,
+          promotionPassed,
+          promotionRank,
         };
         upsertMetric(point);
       }
@@ -606,6 +621,9 @@ export function TrainingPage() {
         lastRestartReason: readString(job.progress.last_restart_reason, 'none'),
         lastRestartWindow: readNumber(job.progress.last_restart_window, -1),
         eliteFallbackUsed: readBoolean(job.progress.elite_fallback_used),
+        promotionTested: readBoolean(job.progress.last_promotion_tested),
+        promotionPassed: readBoolean(job.progress.last_promotion_passed),
+        promotionRank: readNumber(job.progress.last_promotion_rank, -1),
       },
     );
   }, [
@@ -634,6 +652,9 @@ export function TrainingPage() {
     job?.progress.last_restart_reason,
     job?.progress.last_restart_window,
     job?.progress.elite_fallback_used,
+    job?.progress.last_promotion_tested,
+    job?.progress.last_promotion_passed,
+    job?.progress.last_promotion_rank,
   ]);
 
   const canPause = job?.lifecycle_state === 'Running';
@@ -1035,7 +1056,9 @@ export function TrainingPage() {
               Последнее решение: {latestPoint.selectionDecisionReason} | tiebreak:{' '}
               {latestPoint.selectionTiebreakUsed ? 'yes' : 'no'} | noninferiority:{' '}
               {latestPoint.selectionNoninferiorityPassed ? 'pass' : 'fail'} | Δrobust:{' '}
-              {formatNumber(latestPoint.selectionRobustDelta, 4)} | Δattack: {formatNumber(latestPoint.selectionAttackDelta, 4)}
+              {formatNumber(latestPoint.selectionRobustDelta, 4)} | Δattack: {formatNumber(latestPoint.selectionAttackDelta, 4)} | Лига-тест:{' '}
+              {latestPoint.promotionTested ? (latestPoint.promotionPassed ? 'pass' : 'fail') : 'no'} | Место:{' '}
+              {latestPoint.promotionRank > 0 ? latestPoint.promotionRank : '-'}
             </div>
           )}
 
@@ -1065,6 +1088,8 @@ export function TrainingPage() {
                   <th>Restarts</th>
                   <th>Last restart</th>
                   <th>Fallback</th>
+                  <th>Лига-тест</th>
+                  <th>Место</th>
                 </tr>
               </thead>
               <tbody>
@@ -1095,6 +1120,8 @@ export function TrainingPage() {
                       {point.lastRestartWindow >= 0 ? `@${point.lastRestartWindow}` : ''}
                     </td>
                     <td>{point.eliteFallbackUsed ? 'yes' : 'no'}</td>
+                    <td>{point.promotionTested ? (point.promotionPassed ? 'pass' : 'fail') : 'no'}</td>
+                    <td>{point.promotionRank > 0 ? point.promotionRank : '-'}</td>
                   </tr>
                 ))}
               </tbody>

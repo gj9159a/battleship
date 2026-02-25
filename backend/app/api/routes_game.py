@@ -1,15 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_game_sessions
-from app.engine.types import Placement
-from app.schemas import GameSessionCreateRequest, GameSessionResponse, ShotRequest, ShotResponse
+from app.schemas import GameSessionCreateRequest, GameSessionResponse, PlacementDTO, ShotRequest, ShotResponse
 from app.services.game_sessions import GameSession, GameSessionService
 
 router = APIRouter(prefix="/api/v1/game/sessions", tags=["game"])
-
-
-def _to_placement(dto) -> Placement:
-    return Placement(row=dto.row, col=dto.col, length=dto.length, orientation=dto.orientation)
 
 
 def _to_response(session: GameSession) -> GameSessionResponse:
@@ -20,6 +15,11 @@ def _to_response(session: GameSession) -> GameSessionResponse:
         lifecycle_state=lifecycle_state,
         current_player=session.game.current_player,
         winner=session.game.winner,
+        player_placements=[
+            PlacementDTO(row=item.row, col=item.col, length=item.length, orientation=item.orientation)
+            for item in session.player_placements
+        ],
+        opponent_bot_version_id=session.opponent_bot_version_id,
         shots=[
             ShotResponse(
                 shooter=shot.shooter,
@@ -44,8 +44,6 @@ async def create_game_session(
     try:
         session = game_sessions.create_session(
             ruleset_id=payload.ruleset_id,
-            player_placements=[_to_placement(item) for item in payload.player_placements],
-            opponent_placements=[_to_placement(item) for item in payload.opponent_placements],
             first_player=payload.first_player,
         )
     except KeyError as exc:
