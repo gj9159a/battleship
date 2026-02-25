@@ -7,6 +7,7 @@ import type {
   LeagueRatingDTO,
   LeagueSeasonDTO,
   Placement,
+  PlacementBiasReportDTO,
   RulesetDTO,
   ShotDTO,
   TrainingCheckpointIndexDTO,
@@ -289,4 +290,21 @@ export function connectEvents(onEvent: (event: EventEnvelope) => void): (() => v
   return () => {
     socket.close();
   };
+}
+
+export function analyzePlacementBias(payload: {
+  ruleset_id: string;
+  sample_count: number;
+  seed_anchor?: number | null;
+}): Promise<PlacementBiasReportDTO> {
+  return request<PlacementBiasReportDTO>('/api/v1/benchmarks/placement-bias/analyze', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getLatestPlacementBiasReport(rulesetId: string): Promise<PlacementBiasReportDTO> {
+  return request<PlacementBiasReportDTO>(
+    `/api/v1/benchmarks/placement-bias/latest?ruleset_id=${encodeURIComponent(rulesetId)}`,
+  );
 }

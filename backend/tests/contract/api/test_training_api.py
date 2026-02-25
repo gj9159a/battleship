@@ -100,6 +100,33 @@ def test_training_job_exposes_autoevolve_params_and_progress_fields(client: Test
     assert payload['progress']['champion_gate_lcb'] == 0.0
     assert isinstance(payload['progress']['eval_protocol_hash'], str)
     assert len(payload['progress']['eval_protocol_hash']) == 16
+    assert 'selection_robust_score_candidate' in payload['progress']
+    assert 'selection_robust_score_incumbent' in payload['progress']
+    assert 'selection_noninferiority_passed' in payload['progress']
+    assert 'selection_attack_efficiency_candidate' in payload['progress']
+    assert 'selection_tiebreak_used' in payload['progress']
+    assert payload['progress']['selection_decision_reason'] == 'unknown'
+    assert payload['progress']['elite_candidates_evaluated'] >= 0
+    assert 'elite_selected_candidate_index' in payload['progress']
+    assert 'elite_selection_reason' in payload['progress']
+    assert 'sigma_mean' in payload['progress']
+    assert 'sigma_min' in payload['progress']
+    assert 'sigma_max' in payload['progress']
+    assert payload['progress']['search_policy'] == 'sep_cma_es_lite_v1'
+    assert 'cma_sigma' in payload['progress']
+    assert 'cma_diag_mean' in payload['progress']
+    assert 'cma_diag_min' in payload['progress']
+    assert 'cma_diag_max' in payload['progress']
+    assert 'cma_generation' in payload['progress']
+    assert 'cma_mean_incumbent_l2' in payload['progress']
+    assert 'cma_parent_mu' in payload['progress']
+    assert 'cma_mueff' in payload['progress']
+    assert payload['progress']['search_state_bootstrapped'] is False
+    assert payload['progress']['restart_count'] >= 0
+    assert 'last_restart_reason' in payload['progress']
+    assert 'last_restart_anchor_score' in payload['progress']
+    assert 'last_restart_window' in payload['progress']
+    assert 'elite_fallback_used' in payload['progress']
 
 
 def test_training_checkpoints_save_and_load(client: TestClient) -> None:
@@ -223,6 +250,33 @@ def test_training_ws_emits_lifecycle_stage_and_metrics_events(client: TestClient
                 seen_types.add(event['event_type'])
                 if event['event_type'] == 'training.metrics':
                     metrics_batches.append(int(event['payload'].get('batches_done', 0)))
+                    assert 'selection_robust_score_candidate' in event['payload']
+                    assert 'selection_robust_score_incumbent' in event['payload']
+                    assert 'selection_noninferiority_passed' in event['payload']
+                    assert 'selection_attack_efficiency_candidate' in event['payload']
+                    assert 'selection_tiebreak_used' in event['payload']
+                    assert 'selection_decision_reason' in event['payload']
+                    assert 'elite_candidates_evaluated' in event['payload']
+                    assert 'elite_selected_candidate_index' in event['payload']
+                    assert 'elite_selection_reason' in event['payload']
+                    assert 'sigma_mean' in event['payload']
+                    assert 'sigma_min' in event['payload']
+                    assert 'sigma_max' in event['payload']
+                    assert event['payload']['search_policy'] == 'sep_cma_es_lite_v1'
+                    assert 'cma_sigma' in event['payload']
+                    assert 'cma_diag_mean' in event['payload']
+                    assert 'cma_diag_min' in event['payload']
+                    assert 'cma_diag_max' in event['payload']
+                    assert 'cma_generation' in event['payload']
+                    assert 'cma_mean_incumbent_l2' in event['payload']
+                    assert 'cma_parent_mu' in event['payload']
+                    assert 'cma_mueff' in event['payload']
+                    assert 'search_state_bootstrapped' in event['payload']
+                    assert 'restart_count' in event['payload']
+                    assert 'last_restart_reason' in event['payload']
+                    assert 'last_restart_anchor_score' in event['payload']
+                    assert 'last_restart_window' in event['payload']
+                    assert 'elite_fallback_used' in event['payload']
             if {'job.lifecycle_changed', 'training.stage_changed', 'training.metrics'}.issubset(seen_types):
                 if metrics_batches and max(metrics_batches) >= 1:
                     break

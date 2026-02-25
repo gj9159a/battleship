@@ -6,7 +6,7 @@ from typing import Any
 
 from app.bots.models import BotVersion
 from app.league.models import LeagueRating, LeagueSeason, MatchRecord
-from app.trainer.models import TrainingCheckpoint
+from app.trainer.models import FrozenSuite, FrozenSuiteRun, TrainingCheckpoint
 
 
 class SQLiteStore:
@@ -106,8 +106,66 @@ class SQLiteStore:
                     best_score REAL NOT NULL,
                     stage_state TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS frozen_suites (
+                    suite_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    ruleset_id TEXT NOT NULL,
+                    suite_kind TEXT NOT NULL,
+                    suite_tier TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    suite_protocol_hash TEXT NOT NULL,
+                    seed_anchor INTEGER NOT NULL,
+                    seed_count INTEGER NOT NULL,
+                    seed_derivation_scheme TEXT NOT NULL,
+                    games_per_seed INTEGER NOT NULL,
+                    series_count INTEGER NOT NULL,
+                    mirrored_first_player INTEGER NOT NULL,
+                    opponent_policy_type TEXT NOT NULL,
+                    opponent_bot_version_id TEXT,
+                    opponent_weights_json TEXT NOT NULL,
+                    opponent_lookahead_policy_version TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS frozen_suite_runs (
+                    run_id TEXT PRIMARY KEY,
+                    suite_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    subject_type TEXT NOT NULL,
+                    subject_ref TEXT NOT NULL,
+                    suite_protocol_hash TEXT NOT NULL,
+                    eval_seed_anchor INTEGER NOT NULL,
+                    seed_count INTEGER NOT NULL,
+                    games_per_seed INTEGER NOT NULL,
+                    paired_eval INTEGER NOT NULL,
+                    mirrored_first_player INTEGER NOT NULL,
+                    winrate REAL NOT NULL,
+                    lcb REAL NOT NULL,
+                    avg_shots_to_sink_all REAL NOT NULL,
+                    p95_shots_to_sink_all REAL NOT NULL,
+                    avg_shots_to_first_hit REAL NOT NULL,
+                    avg_shots_after_first_hit_to_sink_all REAL NOT NULL,
+                    avg_misses_before_first_hit REAL NOT NULL,
+                    raw_metrics_json TEXT NOT NULL,
+                    FOREIGN KEY (suite_id) REFERENCES frozen_suites (suite_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_frozen_suite_runs_suite_created
+                    ON frozen_suite_runs (suite_id, created_at DESC);
                 """
             )
+            self._ensure_frozen_suite_tier_column(conn)
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {str(row["name"]) for row in rows}
+
+    def _ensure_frozen_suite_tier_column(self, conn: sqlite3.Connection) -> None:
+        columns = self._table_columns(conn, "frozen_suites")
+        if "suite_tier" not in columns:
+            conn.execute("ALTER TABLE frozen_suites ADD COLUMN suite_tier TEXT NOT NULL DEFAULT 'canonical'")
+            conn.execute("UPDATE frozen_suites SET suite_tier='canonical' WHERE suite_tier IS NULL OR suite_tier = ''")
 
     @staticmethod
     def _dumps(payload: Any) -> str:
@@ -452,5 +510,160 @@ class SQLiteStore:
                     checkpoint.games_played,
                     checkpoint.best_score,
                     checkpoint.stage_state,
+                ),
+            )
+
+    def load_frozen_suites(self) -> list[FrozenSuite]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT suite_id, name, ruleset_id, suite_kind, suite_tier, created_at, suite_protocol_hash,
+                       seed_anchor, seed_count, seed_derivation_scheme, games_per_seed,
+                       series_count, mirrored_first_player, opponent_policy_type,
+                       opponent_bot_version_id, opponent_weights_json, opponent_lookahead_policy_version
+                FROM frozen_suites
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+        return [
+            FrozenSuite(
+                suite_id=row["suite_id"],
+                name=row["name"],
+                ruleset_id=row["ruleset_id"],
+                suite_kind=row["suite_kind"],
+                suite_tier=row["suite_tier"] or "canonical",
+                created_at=row["created_at"],
+                suite_protocol_hash=row["suite_protocol_hash"],
+                seed_anchor=row["seed_anchor"],
+                seed_count=row["seed_count"],
+                seed_derivation_scheme=row["seed_derivation_scheme"],
+                games_per_seed=row["games_per_seed"],
+                series_count=row["series_count"],
+                mirrored_first_player=bool(row["mirrored_first_player"]),
+                opponent_policy_type=row["opponent_policy_type"],
+                opponent_bot_version_id=row["opponent_bot_version_id"],
+                opponent_weights=dict(self._loads(row["opponent_weights_json"])),
+                opponent_lookahead_policy_version=row["opponent_lookahead_policy_version"],
+            )
+            for row in rows
+        ]
+
+    def insert_frozen_suite(self, suite: FrozenSuite) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO frozen_suites (
+                    suite_id, name, ruleset_id, suite_kind, suite_tier, created_at, suite_protocol_hash,
+                    seed_anchor, seed_count, seed_derivation_scheme, games_per_seed,
+                    series_count, mirrored_first_player, opponent_policy_type,
+                    opponent_bot_version_id, opponent_weights_json, opponent_lookahead_policy_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    suite.suite_id,
+                    suite.name,
+                    suite.ruleset_id,
+                    suite.suite_kind,
+                    suite.suite_tier,
+                    suite.created_at,
+                    suite.suite_protocol_hash,
+                    suite.seed_anchor,
+                    suite.seed_count,
+                    suite.seed_derivation_scheme,
+                    suite.games_per_seed,
+                    suite.series_count,
+                    1 if suite.mirrored_first_player else 0,
+                    suite.opponent_policy_type,
+                    suite.opponent_bot_version_id,
+                    self._dumps(suite.opponent_weights),
+                    suite.opponent_lookahead_policy_version,
+                ),
+            )
+
+    def load_frozen_suite_runs(self, suite_id: str | None = None) -> list[FrozenSuiteRun]:
+        with self._lock, self._connect() as conn:
+            if suite_id is None:
+                rows = conn.execute(
+                    """
+                    SELECT run_id, suite_id, created_at, subject_type, subject_ref, suite_protocol_hash,
+                           eval_seed_anchor, seed_count, games_per_seed, paired_eval, mirrored_first_player,
+                           winrate, lcb, avg_shots_to_sink_all, p95_shots_to_sink_all,
+                           avg_shots_to_first_hit, avg_shots_after_first_hit_to_sink_all,
+                           avg_misses_before_first_hit, raw_metrics_json
+                    FROM frozen_suite_runs
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT run_id, suite_id, created_at, subject_type, subject_ref, suite_protocol_hash,
+                           eval_seed_anchor, seed_count, games_per_seed, paired_eval, mirrored_first_player,
+                           winrate, lcb, avg_shots_to_sink_all, p95_shots_to_sink_all,
+                           avg_shots_to_first_hit, avg_shots_after_first_hit_to_sink_all,
+                           avg_misses_before_first_hit, raw_metrics_json
+                    FROM frozen_suite_runs
+                    WHERE suite_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (suite_id,),
+                ).fetchall()
+        return [
+            FrozenSuiteRun(
+                run_id=row["run_id"],
+                suite_id=row["suite_id"],
+                created_at=row["created_at"],
+                subject_type=row["subject_type"],
+                subject_ref=row["subject_ref"],
+                suite_protocol_hash=row["suite_protocol_hash"],
+                eval_seed_anchor=row["eval_seed_anchor"],
+                seed_count=row["seed_count"],
+                games_per_seed=row["games_per_seed"],
+                paired_eval=bool(row["paired_eval"]),
+                mirrored_first_player=bool(row["mirrored_first_player"]),
+                winrate=row["winrate"],
+                lcb=row["lcb"],
+                avg_shots_to_sink_all=row["avg_shots_to_sink_all"],
+                p95_shots_to_sink_all=row["p95_shots_to_sink_all"],
+                avg_shots_to_first_hit=row["avg_shots_to_first_hit"],
+                avg_shots_after_first_hit_to_sink_all=row["avg_shots_after_first_hit_to_sink_all"],
+                avg_misses_before_first_hit=row["avg_misses_before_first_hit"],
+                raw_metrics=dict(self._loads(row["raw_metrics_json"])),
+            )
+            for row in rows
+        ]
+
+    def insert_frozen_suite_run(self, run: FrozenSuiteRun) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO frozen_suite_runs (
+                    run_id, suite_id, created_at, subject_type, subject_ref, suite_protocol_hash,
+                    eval_seed_anchor, seed_count, games_per_seed, paired_eval, mirrored_first_player,
+                    winrate, lcb, avg_shots_to_sink_all, p95_shots_to_sink_all,
+                    avg_shots_to_first_hit, avg_shots_after_first_hit_to_sink_all,
+                    avg_misses_before_first_hit, raw_metrics_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.run_id,
+                    run.suite_id,
+                    run.created_at,
+                    run.subject_type,
+                    run.subject_ref,
+                    run.suite_protocol_hash,
+                    run.eval_seed_anchor,
+                    run.seed_count,
+                    run.games_per_seed,
+                    1 if run.paired_eval else 0,
+                    1 if run.mirrored_first_player else 0,
+                    run.winrate,
+                    run.lcb,
+                    run.avg_shots_to_sink_all,
+                    run.p95_shots_to_sink_all,
+                    run.avg_shots_to_first_hit,
+                    run.avg_shots_after_first_hit_to_sink_all,
+                    run.avg_misses_before_first_hit,
+                    self._dumps(run.raw_metrics),
                 ),
             )

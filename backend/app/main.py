@@ -5,7 +5,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api_router
-from app.services import BotCatalogService, EventBus, GameSessionService, LeagueService, TrainingJobService
+from app.services import (
+    BotCatalogService,
+    EventBus,
+    FrozenBenchmarkService,
+    GameSessionService,
+    LeagueService,
+    PlacementDiagnosticsService,
+    TrainingJobService,
+)
 from app.storage import SQLiteStore
 
 ALLOWED_ORIGINS = [
@@ -45,11 +53,15 @@ def create_app(*, data_root: Path | None = None) -> FastAPI:
     app.state.game_sessions = GameSessionService()
     app.state.bot_catalog = BotCatalogService(store=store)
     app.state.league_service = LeagueService(event_bus=event_bus, store=store, bot_catalog=app.state.bot_catalog)
+    app.state.frozen_benchmarks = FrozenBenchmarkService(store=store, bot_catalog=app.state.bot_catalog)
+    app.state.placement_diagnostics = PlacementDiagnosticsService()
+    app.state.frozen_benchmarks.ensure_frozen_suites("classic_v1", suite_tier="canonical")
     app.state.training_jobs = TrainingJobService(
         event_bus=event_bus,
         checkpoint_root=resolved_data_root / "training_checkpoints",
         bot_catalog=app.state.bot_catalog,
         league_service=app.state.league_service,
+        frozen_benchmarks=app.state.frozen_benchmarks,
         store=store,
     )
 

@@ -84,6 +84,39 @@ export type TrainingProgressDTO = {
   meta_plateau_counter: number;
   champion_gate_lcb: number;
   eval_protocol_hash: string;
+  last_wr_baseline?: number;
+  last_wr_active?: number;
+  last_avg_turns_win?: number;
+  last_avg_shots_to_sink_all?: number;
+  last_p95_shots_to_sink_all?: number;
+  last_avg_shots_to_first_hit?: number;
+  last_avg_shots_after_first_hit_to_sink_all?: number;
+  last_avg_misses_before_first_hit?: number;
+  last_eval_seed_anchor?: number;
+  last_incumbent_seed_anchor?: number;
+  last_eval_paired?: boolean;
+  last_eval_mirrored?: boolean;
+  selection_robust_score_candidate?: number;
+  selection_robust_score_incumbent?: number;
+  selection_robust_delta?: number;
+  selection_noninferiority_passed?: boolean;
+  selection_attack_efficiency_candidate?: number;
+  selection_attack_efficiency_incumbent?: number;
+  selection_attack_delta?: number;
+  selection_tiebreak_used?: boolean;
+  selection_decision_reason?: string;
+  elite_candidates_evaluated?: number;
+  elite_selected_candidate_index?: number;
+  elite_selection_reason?: string;
+  sigma_mean?: number;
+  sigma_min?: number;
+  sigma_max?: number;
+  restart_count?: number;
+  last_restart_reason?: string;
+  last_restart_anchor_score?: number;
+  last_restart_window?: number;
+  elite_fallback_used?: boolean;
+  frozen_suite_summaries?: Record<string, FrozenSuiteSummaryDTO>;
 };
 
 export type TrainingJobDTO = {
@@ -187,4 +220,44 @@ export type TrainingCheckpointIndexDTO = {
   games_played: number;
   best_score: number;
   stage_state: string | null;
+};
+
+export type FrozenSuiteSummaryDTO = {
+  run_id?: string;
+  suite_id?: string;
+  suite_kind?: string;
+  suite_tier?: string;
+  created_at?: string;
+  subject_type?: 'bot_version' | 'checkpoint';
+  subject_ref?: string;
+  suite_protocol_hash?: string;
+  eval_seed_anchor?: number;
+  seed_count?: number;
+  games_per_seed?: number;
+  paired_eval?: boolean;
+  mirrored_first_player?: boolean;
+  winrate?: number;
+  lcb?: number;
+  avg_shots_to_sink_all?: number;
+  p95_shots_to_sink_all?: number;
+  avg_shots_to_first_hit?: number;
+  avg_shots_after_first_hit_to_sink_all?: number;
+  avg_misses_before_first_hit?: number;
+};
+
+export type PlacementBiasReportDTO = {
+  report_id: string;
+  ruleset_id: string;
+  sample_count: number;
+  seed_anchor: number;
+  seed_derivation_scheme: string;
+  generator_version: string;
+  created_at: string;
+  occupancy_heatmap: number[][];
+  occupancy_by_ship_len: Record<string, number[][]>;
+  orientation_stats_by_len: Record<string, { horizontal: number; vertical: number; count: number }>;
+  edge_center_bias: Record<string, number>;
+  corner_bias: Record<string, number>;
+  retry_stats: Record<string, unknown>;
+  seed_reproducibility_check: Record<string, unknown>;
 };

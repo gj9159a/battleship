@@ -159,6 +159,49 @@ class TrainingProgressDTO(BaseModel):
     meta_plateau_counter: int
     champion_gate_lcb: float
     eval_protocol_hash: str
+    last_wr_baseline: float
+    last_wr_active: float
+    last_avg_turns_win: float
+    last_avg_shots_to_sink_all: float
+    last_p95_shots_to_sink_all: float
+    last_avg_shots_to_first_hit: float
+    last_avg_shots_after_first_hit_to_sink_all: float
+    last_avg_misses_before_first_hit: float
+    last_eval_seed_anchor: int
+    last_incumbent_seed_anchor: int
+    last_eval_paired: bool
+    last_eval_mirrored: bool
+    selection_robust_score_candidate: float
+    selection_robust_score_incumbent: float
+    selection_robust_delta: float
+    selection_noninferiority_passed: bool
+    selection_attack_efficiency_candidate: float
+    selection_attack_efficiency_incumbent: float
+    selection_attack_delta: float
+    selection_tiebreak_used: bool
+    selection_decision_reason: str
+    elite_candidates_evaluated: int
+    elite_selected_candidate_index: int
+    elite_selection_reason: str
+    sigma_mean: float
+    sigma_min: float
+    sigma_max: float
+    search_policy: str
+    cma_sigma: float
+    cma_diag_mean: float
+    cma_diag_min: float
+    cma_diag_max: float
+    cma_generation: int
+    cma_mean_incumbent_l2: float
+    cma_parent_mu: int
+    cma_mueff: float
+    search_state_bootstrapped: bool
+    restart_count: int
+    last_restart_reason: str
+    last_restart_anchor_score: float
+    last_restart_window: int
+    elite_fallback_used: bool
+    frozen_suite_summaries: dict[str, dict[str, object]]
 
 
 class TrainingCheckpointResponse(BaseModel):
@@ -268,3 +311,82 @@ class LeagueSeasonResponse(BaseModel):
     microbatch_size: int
     matches_done: int
     stop_reason: str | None
+
+
+class FrozenSuiteResponse(BaseModel):
+    suite_id: str
+    name: str
+    ruleset_id: str
+    suite_kind: Literal["random", "strong"]
+    suite_tier: Literal["canonical", "ci_smoke"]
+    created_at: str
+    suite_protocol_hash: str
+    seed_anchor: int
+    seed_count: int
+    seed_derivation_scheme: str
+    games_per_seed: int
+    series_count: int
+    mirrored_first_player: bool
+    opponent_policy_type: str
+    opponent_bot_version_id: str | None
+    opponent_weights: dict[str, float]
+    opponent_lookahead_policy_version: str
+
+
+class FrozenSuiteRunResponse(BaseModel):
+    run_id: str
+    suite_id: str
+    created_at: str
+    subject_type: Literal["bot_version", "checkpoint"]
+    subject_ref: str
+    suite_protocol_hash: str
+    eval_seed_anchor: int
+    seed_count: int
+    games_per_seed: int
+    paired_eval: bool
+    mirrored_first_player: bool
+    winrate: float
+    lcb: float
+    avg_shots_to_sink_all: float
+    p95_shots_to_sink_all: float
+    avg_shots_to_first_hit: float
+    avg_shots_after_first_hit_to_sink_all: float
+    avg_misses_before_first_hit: float
+    raw_metrics: dict[str, str | float | int | bool | None]
+
+
+class FrozenSuiteRunBotVersionRequest(BaseModel):
+    bot_version_id: str
+
+
+class FrozenSuiteRunCheckpointRequest(BaseModel):
+    job_id: str
+    checkpoint_id: str
+
+
+class FrozenSuiteEnsureRequest(BaseModel):
+    ruleset_id: str
+    suite_tier: Literal["canonical", "ci_smoke"] = "canonical"
+
+
+class PlacementBiasAnalyzeRequest(BaseModel):
+    ruleset_id: str
+    sample_count: int = Field(default=5000, gt=0, le=100000)
+    seed_anchor: int | None = None
+
+
+class PlacementBiasReportResponse(BaseModel):
+    report_id: str
+    ruleset_id: str
+    sample_count: int
+    seed_anchor: int
+    seed_derivation_scheme: str
+    generator_version: str
+    created_at: str
+    occupancy_heatmap: list[list[float]]
+    occupancy_by_ship_len: dict[str, list[list[float]]]
+    orientation_stats_by_len: dict[str, dict[str, float | int]]
+    edge_center_bias: dict[str, float]
+    corner_bias: dict[str, float]
+    retry_stats: dict[str, object]
+    seed_reproducibility_check: dict[str, object]

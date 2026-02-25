@@ -35,6 +35,7 @@ def test_checkpoint_store_save_and_load(tmp_path: Path) -> None:
         games_played=150,
         best_score=0.73,
         stage_state='MainOptimization',
+        search_state={"search_policy": "sep_cma_es_lite_v1", "cma_generation": 2},
     )
     loaded = store.load(checkpoint)
 
@@ -44,3 +45,4 @@ def test_checkpoint_store_save_and_load(tmp_path: Path) -> None:
     assert loaded['games_played'] == 150
     assert loaded['best_score'] == 0.73
     assert loaded['stage_state'] == 'MainOptimization'
+    assert loaded['search_state']['search_policy'] == 'sep_cma_es_lite_v1'

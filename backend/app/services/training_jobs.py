@@ -13,10 +13,18 @@ from app.bots.selfplay import SelfPlaySimulator, play_strong_vs
 from app.rulesets import get_ruleset
 from app.services.bot_catalog import BotCatalogService
 from app.services.events import EventBus
+from app.services.frozen_benchmarks import FrozenBenchmarkService
 from app.services.league import LeagueService
 from app.storage import SQLiteStore
 from app.trainer import CheckpointStore, TrainingCheckpoint, TrainingParams, TrainingProgress
 from app.trainer.models import LifecycleState, StageState
+from app.trainer.simulation import (
+    ATTACK_EFFICIENCY_WEIGHTS,
+    ATTACK_TIEBREAK_EPSILON,
+    GROUP_NONINFERIORITY_EPSILON,
+    ROBUST_EPSILON,
+    SELECTION_POLICY_VERSION,
+)
 
 
 @dataclass(slots=True)
@@ -72,6 +80,7 @@ class TrainingJobService:
         checkpoint_root: Path | None = None,
         bot_catalog: BotCatalogService | None = None,
         league_service: LeagueService | None = None,
+        frozen_benchmarks: FrozenBenchmarkService | None = None,
         store: SQLiteStore | None = None,
     ) -> None:
         self._jobs: dict[str, TrainingJob] = {}
@@ -80,6 +89,7 @@ class TrainingJobService:
         self._runtimes: dict[str, _TrainingRuntime] = {}
         self._bot_catalog = bot_catalog
         self._league_service = league_service
+        self._frozen_benchmarks = frozen_benchmarks
         self._store = store
         self._lock = threading.RLock()
         root = checkpoint_root or (Path.cwd() / ".data" / "training_checkpoints")
@@ -108,6 +118,57 @@ class TrainingJobService:
                     meta_plateau_counter=int(progress_payload.get("meta_plateau_counter", 0)),
                     champion_gate_lcb=float(progress_payload.get("champion_gate_lcb", 0.0)),
                     eval_protocol_hash=str(progress_payload.get("eval_protocol_hash", "")),
+                    last_wr_baseline=float(progress_payload.get("last_wr_baseline", 0.0)),
+                    last_wr_active=float(progress_payload.get("last_wr_active", 0.0)),
+                    last_avg_turns_win=float(progress_payload.get("last_avg_turns_win", 0.0)),
+                    last_avg_shots_to_sink_all=float(progress_payload.get("last_avg_shots_to_sink_all", 0.0)),
+                    last_p95_shots_to_sink_all=float(progress_payload.get("last_p95_shots_to_sink_all", 0.0)),
+                    last_avg_shots_to_first_hit=float(progress_payload.get("last_avg_shots_to_first_hit", 0.0)),
+                    last_avg_shots_after_first_hit_to_sink_all=float(
+                        progress_payload.get("last_avg_shots_after_first_hit_to_sink_all", 0.0)
+                    ),
+                    last_avg_misses_before_first_hit=float(progress_payload.get("last_avg_misses_before_first_hit", 0.0)),
+                    last_eval_seed_anchor=int(progress_payload.get("last_eval_seed_anchor", 0)),
+                    last_incumbent_seed_anchor=int(progress_payload.get("last_incumbent_seed_anchor", 0)),
+                    last_eval_paired=bool(progress_payload.get("last_eval_paired", False)),
+                    last_eval_mirrored=bool(progress_payload.get("last_eval_mirrored", True)),
+                    selection_robust_score_candidate=float(progress_payload.get("selection_robust_score_candidate", 0.0)),
+                    selection_robust_score_incumbent=float(
+                        progress_payload.get("selection_robust_score_incumbent", 0.0)
+                    ),
+                    selection_robust_delta=float(progress_payload.get("selection_robust_delta", 0.0)),
+                    selection_noninferiority_passed=bool(progress_payload.get("selection_noninferiority_passed", False)),
+                    selection_attack_efficiency_candidate=float(
+                        progress_payload.get("selection_attack_efficiency_candidate", 0.0)
+                    ),
+                    selection_attack_efficiency_incumbent=float(
+                        progress_payload.get("selection_attack_efficiency_incumbent", 0.0)
+                    ),
+                    selection_attack_delta=float(progress_payload.get("selection_attack_delta", 0.0)),
+                    selection_tiebreak_used=bool(progress_payload.get("selection_tiebreak_used", False)),
+                    selection_decision_reason=str(progress_payload.get("selection_decision_reason", "unknown")),
+                    elite_candidates_evaluated=int(progress_payload.get("elite_candidates_evaluated", 0)),
+                    elite_selected_candidate_index=int(progress_payload.get("elite_selected_candidate_index", -1)),
+                    elite_selection_reason=str(progress_payload.get("elite_selection_reason", "unknown")),
+                    sigma_mean=float(progress_payload.get("sigma_mean", 0.0)),
+                    sigma_min=float(progress_payload.get("sigma_min", 0.0)),
+                    sigma_max=float(progress_payload.get("sigma_max", 0.0)),
+                    search_policy=str(progress_payload.get("search_policy", "sep_cma_es_lite_v1")),
+                    cma_sigma=float(progress_payload.get("cma_sigma", 0.0)),
+                    cma_diag_mean=float(progress_payload.get("cma_diag_mean", 0.0)),
+                    cma_diag_min=float(progress_payload.get("cma_diag_min", 0.0)),
+                    cma_diag_max=float(progress_payload.get("cma_diag_max", 0.0)),
+                    cma_generation=int(progress_payload.get("cma_generation", 0)),
+                    cma_mean_incumbent_l2=float(progress_payload.get("cma_mean_incumbent_l2", 0.0)),
+                    cma_parent_mu=int(progress_payload.get("cma_parent_mu", 0)),
+                    cma_mueff=float(progress_payload.get("cma_mueff", 0.0)),
+                    search_state_bootstrapped=bool(progress_payload.get("search_state_bootstrapped", False)),
+                    restart_count=int(progress_payload.get("restart_count", 0)),
+                    last_restart_reason=str(progress_payload.get("last_restart_reason", "none")),
+                    last_restart_anchor_score=float(progress_payload.get("last_restart_anchor_score", 0.0)),
+                    last_restart_window=int(progress_payload.get("last_restart_window", -1)),
+                    elite_fallback_used=bool(progress_payload.get("elite_fallback_used", False)),
+                    frozen_suite_summaries=dict(progress_payload.get("frozen_suite_summaries", {})),
                 )
                 state = row["lifecycle_state"]
                 if state in {"Running", "Pausing", "Stopping"}:
@@ -138,6 +199,8 @@ class TrainingJobService:
                         train_split=job.params.train_split,
                         worker_count=job.params.worker_count,
                         seed_weights=job.current_weights,
+                        seed_best_weights=job.best_weights,
+                        seed_best_score=job.progress.best_score,
                     ),
                     last_auto_promote_window=job.progress.windows_done,
                 )
@@ -151,6 +214,39 @@ class TrainingJobService:
 
             for checkpoint_list in self._checkpoints.values():
                 checkpoint_list.sort(key=lambda item: item.batches_done)
+
+            for job_id, checkpoint_list in self._checkpoints.items():
+                if not checkpoint_list:
+                    continue
+                job = self._jobs[job_id]
+                runtime = self._runtimes[job_id]
+                latest = checkpoint_list[-1]
+                has_full_search_state = False
+                search_state_payload: dict | None = None
+                try:
+                    payload = self._checkpoint_store.load(latest)
+                    search_state_payload = payload.get("search_state")
+                    has_full_search_state = SelfPlaySimulator.has_full_search_state(search_state_payload)
+                except FileNotFoundError:
+                    has_full_search_state = False
+                    search_state_payload = None
+                if runtime.simulator is not None:
+                    runtime.simulator.close()
+                runtime.simulator = SelfPlaySimulator(
+                    ruleset_id=job.ruleset_id,
+                    seed=job.seed + job.progress.windows_done,
+                    window_games=job.params.microbatch_size * job.params.eval_window_batches,
+                    population_size=job.params.population_size,
+                    train_split=job.params.train_split,
+                    worker_count=job.params.worker_count,
+                    seed_weights=job.current_weights,
+                    seed_best_weights=job.best_weights,
+                    seed_best_score=job.progress.best_score,
+                    search_state=search_state_payload if has_full_search_state else None,
+                )
+                job.progress.search_state_bootstrapped = not has_full_search_state
+                self._sync_search_progress_from_state(job, runtime.simulator.search_observability())
+                self._persist_job_locked(job)
 
     def _persist_job_locked(self, job: TrainingJob) -> None:
         if self._store is None:
@@ -199,6 +295,49 @@ class TrainingJobService:
                     "meta_plateau_counter": job.progress.meta_plateau_counter,
                     "champion_gate_lcb": job.progress.champion_gate_lcb,
                     "eval_protocol_hash": job.progress.eval_protocol_hash,
+                    "last_wr_baseline": job.progress.last_wr_baseline,
+                    "last_wr_active": job.progress.last_wr_active,
+                    "last_avg_turns_win": job.progress.last_avg_turns_win,
+                    "last_avg_shots_to_sink_all": job.progress.last_avg_shots_to_sink_all,
+                    "last_p95_shots_to_sink_all": job.progress.last_p95_shots_to_sink_all,
+                    "last_avg_shots_to_first_hit": job.progress.last_avg_shots_to_first_hit,
+                    "last_avg_shots_after_first_hit_to_sink_all": job.progress.last_avg_shots_after_first_hit_to_sink_all,
+                    "last_avg_misses_before_first_hit": job.progress.last_avg_misses_before_first_hit,
+                    "last_eval_seed_anchor": job.progress.last_eval_seed_anchor,
+                    "last_incumbent_seed_anchor": job.progress.last_incumbent_seed_anchor,
+                    "last_eval_paired": job.progress.last_eval_paired,
+                    "last_eval_mirrored": job.progress.last_eval_mirrored,
+                    "selection_robust_score_candidate": job.progress.selection_robust_score_candidate,
+                    "selection_robust_score_incumbent": job.progress.selection_robust_score_incumbent,
+                    "selection_robust_delta": job.progress.selection_robust_delta,
+                    "selection_noninferiority_passed": job.progress.selection_noninferiority_passed,
+                    "selection_attack_efficiency_candidate": job.progress.selection_attack_efficiency_candidate,
+                    "selection_attack_efficiency_incumbent": job.progress.selection_attack_efficiency_incumbent,
+                    "selection_attack_delta": job.progress.selection_attack_delta,
+                    "selection_tiebreak_used": job.progress.selection_tiebreak_used,
+                    "selection_decision_reason": job.progress.selection_decision_reason,
+                    "elite_candidates_evaluated": job.progress.elite_candidates_evaluated,
+                    "elite_selected_candidate_index": job.progress.elite_selected_candidate_index,
+                    "elite_selection_reason": job.progress.elite_selection_reason,
+                    "sigma_mean": job.progress.sigma_mean,
+                    "sigma_min": job.progress.sigma_min,
+                    "sigma_max": job.progress.sigma_max,
+                    "search_policy": job.progress.search_policy,
+                    "cma_sigma": job.progress.cma_sigma,
+                    "cma_diag_mean": job.progress.cma_diag_mean,
+                    "cma_diag_min": job.progress.cma_diag_min,
+                    "cma_diag_max": job.progress.cma_diag_max,
+                    "cma_generation": job.progress.cma_generation,
+                    "cma_mean_incumbent_l2": job.progress.cma_mean_incumbent_l2,
+                    "cma_parent_mu": job.progress.cma_parent_mu,
+                    "cma_mueff": job.progress.cma_mueff,
+                    "search_state_bootstrapped": job.progress.search_state_bootstrapped,
+                    "restart_count": job.progress.restart_count,
+                    "last_restart_reason": job.progress.last_restart_reason,
+                    "last_restart_anchor_score": job.progress.last_restart_anchor_score,
+                    "last_restart_window": job.progress.last_restart_window,
+                    "elite_fallback_used": job.progress.elite_fallback_used,
+                    "frozen_suite_summaries": dict(job.progress.frozen_suite_summaries),
                 },
                 "current_weights": dict(job.current_weights),
                 "best_weights": dict(job.best_weights),
@@ -245,6 +384,8 @@ class TrainingJobService:
                     train_split=resolved_params.train_split,
                     worker_count=resolved_params.worker_count,
                     seed_weights=normalized_seed_weights,
+                    seed_best_weights=normalized_seed_weights,
+                    seed_best_score=0.0,
                 )
             )
             self._persist_job_locked(job)
@@ -302,6 +443,8 @@ class TrainingJobService:
             job.stage_state = stage_state if stage_state else None
             job.current_weights = normalize_weights(payload.get("current_weights"))
             job.best_weights = normalize_weights(payload.get("best_weights"))
+            search_state_payload = payload.get("search_state")
+            has_full_search_state = SelfPlaySimulator.has_full_search_state(search_state_payload)
 
             runtime = self._runtimes[job.id]
             if runtime.simulator is not None:
@@ -314,14 +457,33 @@ class TrainingJobService:
                 train_split=job.params.train_split,
                 worker_count=job.params.worker_count,
                 seed_weights=job.current_weights,
+                seed_best_weights=job.best_weights,
+                seed_best_score=job.progress.best_score,
+                search_state=search_state_payload if has_full_search_state else None,
             )
+            job.progress.search_state_bootstrapped = not has_full_search_state
+            self._sync_search_progress_from_state(job, runtime.simulator.search_observability())
             self._persist_job_locked(job)
 
+        if not has_full_search_state:
+            self._event_bus.publish_sync(
+                event_type="training.search_state_bootstrapped",
+                entity_id=job_id,
+                ruleset_id=job.ruleset_id,
+                payload={
+                    "checkpoint_id": checkpoint_id,
+                    "reason": "missing_or_incomplete_search_state",
+                },
+            )
         self._event_bus.publish_sync(
             event_type="training.checkpoint_loaded",
             entity_id=job_id,
             ruleset_id=job.ruleset_id,
-            payload={"checkpoint_id": checkpoint_id, "batches_done": job.progress.batches_done},
+            payload={
+                "checkpoint_id": checkpoint_id,
+                "batches_done": job.progress.batches_done,
+                "search_state_bootstrapped": job.progress.search_state_bootstrapped,
+            },
         )
         return job
 
@@ -338,6 +500,7 @@ class TrainingJobService:
                 if job.stage_state is None:
                     self._set_stage_locked(job, "Warmup", reason="job_started", publish_async=False)
                 self._ensure_league_bootstrap_locked(job)
+                self._ensure_frozen_suites_bootstrap_locked(job)
                 self._set_state_locked(job, "Running", publish_async=False)
                 runtime.pause_requested = False
                 runtime.stop_requested = False
@@ -520,9 +683,49 @@ class TrainingJobService:
     def _run_microbatch_locked(self, job: TrainingJob, runtime: _TrainingRuntime) -> None:
         job.progress.batches_done += 1
         job.progress.games_played += job.params.microbatch_size
+        checkpoint_due = (job.progress.batches_done % job.params.checkpoint_interval_batches) == 0
         wr_baseline: float | None = None
         wr_active: float | None = None
         avg_turns_win: float | None = None
+        avg_shots_to_sink_all: float | None = None
+        p95_shots_to_sink_all: float | None = None
+        avg_shots_to_first_hit: float | None = None
+        avg_shots_after_first_hit_to_sink_all: float | None = None
+        avg_misses_before_first_hit: float | None = None
+        eval_seed_anchor: int | None = None
+        incumbent_seed_anchor: int | None = None
+        eval_paired: bool | None = None
+        eval_mirrored: bool | None = None
+        selection_robust_score_candidate: float | None = None
+        selection_robust_score_incumbent: float | None = None
+        selection_robust_delta: float | None = None
+        selection_noninferiority_passed: bool | None = None
+        selection_attack_efficiency_candidate: float | None = None
+        selection_attack_efficiency_incumbent: float | None = None
+        selection_attack_delta: float | None = None
+        selection_tiebreak_used: bool | None = None
+        selection_decision_reason: str | None = None
+        elite_candidates_evaluated: int | None = None
+        elite_selected_candidate_index: int | None = None
+        elite_selection_reason: str | None = None
+        sigma_mean: float | None = None
+        sigma_min: float | None = None
+        sigma_max: float | None = None
+        search_policy: str | None = None
+        cma_sigma: float | None = None
+        cma_diag_mean: float | None = None
+        cma_diag_min: float | None = None
+        cma_diag_max: float | None = None
+        cma_generation: int | None = None
+        cma_mean_incumbent_l2: float | None = None
+        cma_parent_mu: int | None = None
+        cma_mueff: float | None = None
+        search_state_bootstrapped: bool | None = None
+        restart_count: int | None = None
+        last_restart_reason: str | None = None
+        last_restart_anchor_score: float | None = None
+        last_restart_window: int | None = None
+        elite_fallback_used: bool | None = None
         strictness = self._strictness_config_for_job(job)
         needs_window_eval = (job.progress.batches_done % job.params.eval_window_batches) == 0
 
@@ -536,6 +739,8 @@ class TrainingJobService:
                     train_split=job.params.train_split,
                     worker_count=job.params.worker_count,
                     seed_weights=job.current_weights,
+                    seed_best_weights=job.best_weights,
+                    seed_best_score=job.progress.best_score,
                 )
 
             league_opponents = self._collect_top_league_opponents_locked(job, strictness)
@@ -546,12 +751,55 @@ class TrainingJobService:
                 wr_baseline=None,
                 wr_active=None,
                 avg_turns_win=None,
+                avg_shots_to_sink_all=None,
+                p95_shots_to_sink_all=None,
+                avg_shots_to_first_hit=None,
+                avg_shots_after_first_hit_to_sink_all=None,
+                avg_misses_before_first_hit=None,
+                eval_seed_anchor=None,
+                incumbent_seed_anchor=None,
+                eval_paired=None,
+                eval_mirrored=None,
+                selection_robust_score_candidate=None,
+                selection_robust_score_incumbent=None,
+                selection_robust_delta=None,
+                selection_noninferiority_passed=None,
+                selection_attack_efficiency_candidate=None,
+                selection_attack_efficiency_incumbent=None,
+                selection_attack_delta=None,
+                selection_tiebreak_used=None,
+                selection_decision_reason=None,
+                elite_candidates_evaluated=None,
+                elite_selected_candidate_index=None,
+                elite_selection_reason=None,
+                sigma_mean=None,
+                sigma_min=None,
+                sigma_max=None,
+                search_policy=None,
+                cma_sigma=None,
+                cma_diag_mean=None,
+                cma_diag_min=None,
+                cma_diag_max=None,
+                cma_generation=None,
+                cma_mean_incumbent_l2=None,
+                cma_parent_mu=None,
+                cma_mueff=None,
+                search_state_bootstrapped=None,
+                restart_count=None,
+                last_restart_reason=None,
+                last_restart_anchor_score=None,
+                last_restart_window=None,
+                elite_fallback_used=None,
                 window_evaluated=False,
             )
 
             self._lock.release()
             try:
-                metrics = runtime.simulator.next_window(job.progress.windows_done, league_opponents=league_opponents)
+                metrics = runtime.simulator.next_window(
+                    job.progress.windows_done,
+                    eval_protocol_hash=job.progress.eval_protocol_hash,
+                    league_opponents=league_opponents,
+                )
             finally:
                 self._lock.acquire()
             prev_best = job.progress.best_score
@@ -560,6 +808,87 @@ class TrainingJobService:
             wr_baseline = metrics.wr_baseline
             wr_active = metrics.wr_active
             avg_turns_win = metrics.avg_turns_win
+            avg_shots_to_sink_all = metrics.avg_shots_to_sink_all
+            p95_shots_to_sink_all = metrics.p95_shots_to_sink_all
+            avg_shots_to_first_hit = metrics.avg_shots_to_first_hit
+            avg_shots_after_first_hit_to_sink_all = metrics.avg_shots_after_first_hit_to_sink_all
+            avg_misses_before_first_hit = metrics.avg_misses_before_first_hit
+            eval_seed_anchor = metrics.eval_seed_anchor
+            incumbent_seed_anchor = metrics.incumbent_seed_anchor
+            eval_paired = metrics.paired_eval
+            eval_mirrored = metrics.mirrored_first_player
+            selection_robust_score_candidate = metrics.selection_robust_score_candidate
+            selection_robust_score_incumbent = metrics.selection_robust_score_incumbent
+            selection_robust_delta = metrics.selection_robust_delta
+            selection_noninferiority_passed = metrics.selection_noninferiority_passed
+            selection_attack_efficiency_candidate = metrics.selection_attack_efficiency_candidate
+            selection_attack_efficiency_incumbent = metrics.selection_attack_efficiency_incumbent
+            selection_attack_delta = metrics.selection_attack_delta
+            selection_tiebreak_used = metrics.selection_tiebreak_used
+            selection_decision_reason = metrics.selection_decision_reason
+            elite_candidates_evaluated = metrics.elite_candidates_evaluated
+            elite_selected_candidate_index = metrics.elite_selected_candidate_index
+            elite_selection_reason = metrics.elite_selection_reason
+            sigma_mean = metrics.sigma_mean
+            sigma_min = metrics.sigma_min
+            sigma_max = metrics.sigma_max
+            search_policy = metrics.search_policy
+            cma_sigma = metrics.cma_sigma
+            cma_diag_mean = metrics.cma_diag_mean
+            cma_diag_min = metrics.cma_diag_min
+            cma_diag_max = metrics.cma_diag_max
+            cma_generation = metrics.cma_generation
+            cma_mean_incumbent_l2 = metrics.cma_mean_incumbent_l2
+            cma_parent_mu = metrics.cma_parent_mu
+            cma_mueff = metrics.cma_mueff
+            search_state_bootstrapped = job.progress.search_state_bootstrapped
+            restart_count = metrics.restart_count
+            last_restart_reason = metrics.last_restart_reason
+            last_restart_anchor_score = metrics.last_restart_anchor_score
+            last_restart_window = metrics.last_restart_window
+            elite_fallback_used = metrics.elite_fallback_used
+
+            job.progress.last_wr_baseline = metrics.wr_baseline
+            job.progress.last_wr_active = metrics.wr_active
+            job.progress.last_avg_turns_win = metrics.avg_turns_win
+            job.progress.last_avg_shots_to_sink_all = metrics.avg_shots_to_sink_all
+            job.progress.last_p95_shots_to_sink_all = metrics.p95_shots_to_sink_all
+            job.progress.last_avg_shots_to_first_hit = metrics.avg_shots_to_first_hit
+            job.progress.last_avg_shots_after_first_hit_to_sink_all = metrics.avg_shots_after_first_hit_to_sink_all
+            job.progress.last_avg_misses_before_first_hit = metrics.avg_misses_before_first_hit
+            job.progress.last_eval_seed_anchor = metrics.eval_seed_anchor
+            job.progress.last_incumbent_seed_anchor = metrics.incumbent_seed_anchor
+            job.progress.last_eval_paired = metrics.paired_eval
+            job.progress.last_eval_mirrored = metrics.mirrored_first_player
+            job.progress.selection_robust_score_candidate = metrics.selection_robust_score_candidate
+            job.progress.selection_robust_score_incumbent = metrics.selection_robust_score_incumbent
+            job.progress.selection_robust_delta = metrics.selection_robust_delta
+            job.progress.selection_noninferiority_passed = metrics.selection_noninferiority_passed
+            job.progress.selection_attack_efficiency_candidate = metrics.selection_attack_efficiency_candidate
+            job.progress.selection_attack_efficiency_incumbent = metrics.selection_attack_efficiency_incumbent
+            job.progress.selection_attack_delta = metrics.selection_attack_delta
+            job.progress.selection_tiebreak_used = metrics.selection_tiebreak_used
+            job.progress.selection_decision_reason = metrics.selection_decision_reason
+            job.progress.elite_candidates_evaluated = metrics.elite_candidates_evaluated
+            job.progress.elite_selected_candidate_index = metrics.elite_selected_candidate_index
+            job.progress.elite_selection_reason = metrics.elite_selection_reason
+            job.progress.sigma_mean = metrics.sigma_mean
+            job.progress.sigma_min = metrics.sigma_min
+            job.progress.sigma_max = metrics.sigma_max
+            job.progress.search_policy = metrics.search_policy
+            job.progress.cma_sigma = metrics.cma_sigma
+            job.progress.cma_diag_mean = metrics.cma_diag_mean
+            job.progress.cma_diag_min = metrics.cma_diag_min
+            job.progress.cma_diag_max = metrics.cma_diag_max
+            job.progress.cma_generation = metrics.cma_generation
+            job.progress.cma_mean_incumbent_l2 = metrics.cma_mean_incumbent_l2
+            job.progress.cma_parent_mu = metrics.cma_parent_mu
+            job.progress.cma_mueff = metrics.cma_mueff
+            job.progress.restart_count = metrics.restart_count
+            job.progress.last_restart_reason = metrics.last_restart_reason
+            job.progress.last_restart_anchor_score = metrics.last_restart_anchor_score
+            job.progress.last_restart_window = metrics.last_restart_window
+            job.progress.elite_fallback_used = metrics.elite_fallback_used
 
             if metrics.score > prev_best:
                 job.progress.best_score = metrics.score
@@ -574,6 +903,47 @@ class TrainingJobService:
             else:
                 job.progress.plateau_windows = 0
 
+            restart_trigger_windows = max(8, job.params.plateau_patience_windows)
+            restarted = runtime.simulator.maybe_restart(
+                plateau_windows=job.progress.plateau_windows,
+                restart_trigger_plateau_windows=restart_trigger_windows,
+                eval_protocol_hash=job.progress.eval_protocol_hash,
+                windows_done=job.progress.windows_done,
+            )
+            search_state = runtime.simulator.search_observability()
+            self._sync_search_progress_from_state(job, search_state)
+            sigma_mean = job.progress.sigma_mean
+            sigma_min = job.progress.sigma_min
+            sigma_max = job.progress.sigma_max
+            search_policy = job.progress.search_policy
+            cma_sigma = job.progress.cma_sigma
+            cma_diag_mean = job.progress.cma_diag_mean
+            cma_diag_min = job.progress.cma_diag_min
+            cma_diag_max = job.progress.cma_diag_max
+            cma_generation = job.progress.cma_generation
+            cma_mean_incumbent_l2 = job.progress.cma_mean_incumbent_l2
+            cma_parent_mu = job.progress.cma_parent_mu
+            cma_mueff = job.progress.cma_mueff
+            search_state_bootstrapped = job.progress.search_state_bootstrapped
+            restart_count = job.progress.restart_count
+            last_restart_reason = job.progress.last_restart_reason
+            last_restart_anchor_score = job.progress.last_restart_anchor_score
+            last_restart_window = job.progress.last_restart_window
+            elite_fallback_used = job.progress.elite_fallback_used
+
+            if restarted:
+                self._event_bus.publish_sync(
+                    event_type="training.search_restarted",
+                    entity_id=job.id,
+                    ruleset_id=job.ruleset_id,
+                    payload={
+                        "window": job.progress.windows_done,
+                        "reason": job.progress.last_restart_reason,
+                        "anchor_score": job.progress.last_restart_anchor_score,
+                        "restart_count": job.progress.restart_count,
+                    },
+                )
+
             job.current_weights = runtime.simulator.current_weights
             job.best_weights = runtime.simulator.best_weights
 
@@ -584,10 +954,50 @@ class TrainingJobService:
             wr_baseline=wr_baseline,
             wr_active=wr_active,
             avg_turns_win=avg_turns_win,
+            avg_shots_to_sink_all=avg_shots_to_sink_all,
+            p95_shots_to_sink_all=p95_shots_to_sink_all,
+            avg_shots_to_first_hit=avg_shots_to_first_hit,
+            avg_shots_after_first_hit_to_sink_all=avg_shots_after_first_hit_to_sink_all,
+            avg_misses_before_first_hit=avg_misses_before_first_hit,
+            eval_seed_anchor=eval_seed_anchor,
+            incumbent_seed_anchor=incumbent_seed_anchor,
+            eval_paired=eval_paired,
+            eval_mirrored=eval_mirrored,
+            selection_robust_score_candidate=selection_robust_score_candidate,
+            selection_robust_score_incumbent=selection_robust_score_incumbent,
+            selection_robust_delta=selection_robust_delta,
+            selection_noninferiority_passed=selection_noninferiority_passed,
+            selection_attack_efficiency_candidate=selection_attack_efficiency_candidate,
+            selection_attack_efficiency_incumbent=selection_attack_efficiency_incumbent,
+            selection_attack_delta=selection_attack_delta,
+            selection_tiebreak_used=selection_tiebreak_used,
+            selection_decision_reason=selection_decision_reason,
+            elite_candidates_evaluated=elite_candidates_evaluated,
+            elite_selected_candidate_index=elite_selected_candidate_index,
+            elite_selection_reason=elite_selection_reason,
+            sigma_mean=sigma_mean,
+            sigma_min=sigma_min,
+            sigma_max=sigma_max,
+            search_policy=search_policy,
+            cma_sigma=cma_sigma,
+            cma_diag_mean=cma_diag_mean,
+            cma_diag_min=cma_diag_min,
+            cma_diag_max=cma_diag_max,
+            cma_generation=cma_generation,
+            cma_mean_incumbent_l2=cma_mean_incumbent_l2,
+            cma_parent_mu=cma_parent_mu,
+            cma_mueff=cma_mueff,
+            search_state_bootstrapped=search_state_bootstrapped,
+            restart_count=restart_count,
+            last_restart_reason=last_restart_reason,
+            last_restart_anchor_score=last_restart_anchor_score,
+            last_restart_window=last_restart_window,
+            elite_fallback_used=elite_fallback_used,
             window_evaluated=wr_baseline is not None,
         )
 
-        if job.progress.batches_done % job.params.checkpoint_interval_batches == 0:
+        if checkpoint_due and needs_window_eval:
+            search_state_snapshot = runtime.simulator.export_search_state() if runtime.simulator is not None else {}
             checkpoint = self._checkpoint_store.save(
                 job_id=job.id,
                 batches_done=job.progress.batches_done,
@@ -596,11 +1006,32 @@ class TrainingJobService:
                 stage_state=job.stage_state,
                 current_weights=job.current_weights,
                 best_weights=job.best_weights,
+                search_state=search_state_snapshot,
             )
             self._checkpoints[job.id].append(checkpoint)
             if self._store is not None:
                 self._store.upsert_training_checkpoint(checkpoint)
             self._maybe_auto_promote_checkpoint_locked(job, runtime, checkpoint)
+            if self._frozen_benchmarks is not None:
+                checkpoint_payload = self._checkpoint_store.load(checkpoint)
+                checkpoint_weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
+                if checkpoint_weights:
+                    suite_summaries = self._frozen_benchmarks.run_default_suites_for_checkpoint(
+                        ruleset_id=job.ruleset_id,
+                        checkpoint_id=checkpoint.checkpoint_id,
+                        weights=normalize_weights(checkpoint_weights),
+                    )
+                    if suite_summaries:
+                        job.progress.frozen_suite_summaries = suite_summaries
+                        self._event_bus.publish_sync(
+                            event_type="training.frozen_suites_updated",
+                            entity_id=job.id,
+                            ruleset_id=job.ruleset_id,
+                            payload={
+                                "checkpoint_id": checkpoint.checkpoint_id,
+                                "suite_summaries": suite_summaries,
+                            },
+                        )
             self._event_bus.publish_sync(
                 event_type="training.checkpoint_created",
                 entity_id=job.id,
@@ -613,6 +1044,26 @@ class TrainingJobService:
             )
         self._persist_job_locked(job)
 
+    @staticmethod
+    def _sync_search_progress_from_state(job: TrainingJob, search_state: dict[str, float | int | str | bool]) -> None:
+        job.progress.sigma_mean = float(search_state["sigma_mean"])
+        job.progress.sigma_min = float(search_state["sigma_min"])
+        job.progress.sigma_max = float(search_state["sigma_max"])
+        job.progress.search_policy = str(search_state["search_policy"])
+        job.progress.cma_sigma = float(search_state["cma_sigma"])
+        job.progress.cma_diag_mean = float(search_state["cma_diag_mean"])
+        job.progress.cma_diag_min = float(search_state["cma_diag_min"])
+        job.progress.cma_diag_max = float(search_state["cma_diag_max"])
+        job.progress.cma_generation = int(search_state["cma_generation"])
+        job.progress.cma_mean_incumbent_l2 = float(search_state["cma_mean_incumbent_l2"])
+        job.progress.cma_parent_mu = int(search_state["cma_parent_mu"])
+        job.progress.cma_mueff = float(search_state["cma_mueff"])
+        job.progress.restart_count = int(search_state["restart_count"])
+        job.progress.last_restart_reason = str(search_state["last_restart_reason"])
+        job.progress.last_restart_anchor_score = float(search_state["last_restart_anchor_score"])
+        job.progress.last_restart_window = int(search_state["last_restart_window"])
+        job.progress.elite_fallback_used = bool(search_state["elite_fallback_used"])
+
     def _publish_metrics_locked(
         self,
         job: TrainingJob,
@@ -620,6 +1071,45 @@ class TrainingJobService:
         wr_baseline: float | None,
         wr_active: float | None,
         avg_turns_win: float | None,
+        avg_shots_to_sink_all: float | None,
+        p95_shots_to_sink_all: float | None,
+        avg_shots_to_first_hit: float | None,
+        avg_shots_after_first_hit_to_sink_all: float | None,
+        avg_misses_before_first_hit: float | None,
+        eval_seed_anchor: int | None,
+        incumbent_seed_anchor: int | None,
+        eval_paired: bool | None,
+        eval_mirrored: bool | None,
+        selection_robust_score_candidate: float | None,
+        selection_robust_score_incumbent: float | None,
+        selection_robust_delta: float | None,
+        selection_noninferiority_passed: bool | None,
+        selection_attack_efficiency_candidate: float | None,
+        selection_attack_efficiency_incumbent: float | None,
+        selection_attack_delta: float | None,
+        selection_tiebreak_used: bool | None,
+        selection_decision_reason: str | None,
+        elite_candidates_evaluated: int | None,
+        elite_selected_candidate_index: int | None,
+        elite_selection_reason: str | None,
+        sigma_mean: float | None,
+        sigma_min: float | None,
+        sigma_max: float | None,
+        search_policy: str | None,
+        cma_sigma: float | None,
+        cma_diag_mean: float | None,
+        cma_diag_min: float | None,
+        cma_diag_max: float | None,
+        cma_generation: int | None,
+        cma_mean_incumbent_l2: float | None,
+        cma_parent_mu: int | None,
+        cma_mueff: float | None,
+        search_state_bootstrapped: bool | None,
+        restart_count: int | None,
+        last_restart_reason: str | None,
+        last_restart_anchor_score: float | None,
+        last_restart_window: int | None,
+        elite_fallback_used: bool | None,
         window_evaluated: bool,
     ) -> None:
         self._event_bus.publish_sync(
@@ -633,6 +1123,11 @@ class TrainingJobService:
                 "wr_baseline": wr_baseline,
                 "wr_active": wr_active,
                 "avg_turns_win": avg_turns_win,
+                "avg_shots_to_sink_all": avg_shots_to_sink_all,
+                "p95_shots_to_sink_all": p95_shots_to_sink_all,
+                "avg_shots_to_first_hit": avg_shots_to_first_hit,
+                "avg_shots_after_first_hit_to_sink_all": avg_shots_after_first_hit_to_sink_all,
+                "avg_misses_before_first_hit": avg_misses_before_first_hit,
                 "score": job.progress.last_score,
                 "best_score": job.progress.best_score,
                 "plateau_windows": job.progress.plateau_windows,
@@ -642,6 +1137,115 @@ class TrainingJobService:
                 "meta_plateau_counter": job.progress.meta_plateau_counter,
                 "champion_gate_lcb": job.progress.champion_gate_lcb,
                 "eval_protocol_hash": job.progress.eval_protocol_hash,
+                "eval_seed_anchor": eval_seed_anchor if eval_seed_anchor is not None else job.progress.last_eval_seed_anchor,
+                "incumbent_seed_anchor": (
+                    incumbent_seed_anchor if incumbent_seed_anchor is not None else job.progress.last_incumbent_seed_anchor
+                ),
+                "eval_paired": eval_paired if eval_paired is not None else job.progress.last_eval_paired,
+                "eval_mirrored": eval_mirrored if eval_mirrored is not None else job.progress.last_eval_mirrored,
+                "selection_robust_score_candidate": (
+                    selection_robust_score_candidate
+                    if selection_robust_score_candidate is not None
+                    else job.progress.selection_robust_score_candidate
+                ),
+                "selection_robust_score_incumbent": (
+                    selection_robust_score_incumbent
+                    if selection_robust_score_incumbent is not None
+                    else job.progress.selection_robust_score_incumbent
+                ),
+                "selection_robust_delta": (
+                    selection_robust_delta
+                    if selection_robust_delta is not None
+                    else job.progress.selection_robust_delta
+                ),
+                "selection_noninferiority_passed": (
+                    selection_noninferiority_passed
+                    if selection_noninferiority_passed is not None
+                    else job.progress.selection_noninferiority_passed
+                ),
+                "selection_attack_efficiency_candidate": (
+                    selection_attack_efficiency_candidate
+                    if selection_attack_efficiency_candidate is not None
+                    else job.progress.selection_attack_efficiency_candidate
+                ),
+                "selection_attack_efficiency_incumbent": (
+                    selection_attack_efficiency_incumbent
+                    if selection_attack_efficiency_incumbent is not None
+                    else job.progress.selection_attack_efficiency_incumbent
+                ),
+                "selection_attack_delta": (
+                    selection_attack_delta
+                    if selection_attack_delta is not None
+                    else job.progress.selection_attack_delta
+                ),
+                "selection_tiebreak_used": (
+                    selection_tiebreak_used
+                    if selection_tiebreak_used is not None
+                    else job.progress.selection_tiebreak_used
+                ),
+                "selection_decision_reason": (
+                    selection_decision_reason
+                    if selection_decision_reason is not None
+                    else job.progress.selection_decision_reason
+                ),
+                "elite_candidates_evaluated": (
+                    elite_candidates_evaluated
+                    if elite_candidates_evaluated is not None
+                    else job.progress.elite_candidates_evaluated
+                ),
+                "elite_selected_candidate_index": (
+                    elite_selected_candidate_index
+                    if elite_selected_candidate_index is not None
+                    else job.progress.elite_selected_candidate_index
+                ),
+                "elite_selection_reason": (
+                    elite_selection_reason
+                    if elite_selection_reason is not None
+                    else job.progress.elite_selection_reason
+                ),
+                "sigma_mean": sigma_mean if sigma_mean is not None else job.progress.sigma_mean,
+                "sigma_min": sigma_min if sigma_min is not None else job.progress.sigma_min,
+                "sigma_max": sigma_max if sigma_max is not None else job.progress.sigma_max,
+                "search_policy": search_policy if search_policy is not None else job.progress.search_policy,
+                "cma_sigma": cma_sigma if cma_sigma is not None else job.progress.cma_sigma,
+                "cma_diag_mean": cma_diag_mean if cma_diag_mean is not None else job.progress.cma_diag_mean,
+                "cma_diag_min": cma_diag_min if cma_diag_min is not None else job.progress.cma_diag_min,
+                "cma_diag_max": cma_diag_max if cma_diag_max is not None else job.progress.cma_diag_max,
+                "cma_generation": cma_generation if cma_generation is not None else job.progress.cma_generation,
+                "cma_mean_incumbent_l2": (
+                    cma_mean_incumbent_l2
+                    if cma_mean_incumbent_l2 is not None
+                    else job.progress.cma_mean_incumbent_l2
+                ),
+                "cma_parent_mu": cma_parent_mu if cma_parent_mu is not None else job.progress.cma_parent_mu,
+                "cma_mueff": cma_mueff if cma_mueff is not None else job.progress.cma_mueff,
+                "search_state_bootstrapped": (
+                    search_state_bootstrapped
+                    if search_state_bootstrapped is not None
+                    else job.progress.search_state_bootstrapped
+                ),
+                "restart_count": restart_count if restart_count is not None else job.progress.restart_count,
+                "last_restart_reason": (
+                    last_restart_reason
+                    if last_restart_reason is not None
+                    else job.progress.last_restart_reason
+                ),
+                "last_restart_anchor_score": (
+                    last_restart_anchor_score
+                    if last_restart_anchor_score is not None
+                    else job.progress.last_restart_anchor_score
+                ),
+                "last_restart_window": (
+                    last_restart_window
+                    if last_restart_window is not None
+                    else job.progress.last_restart_window
+                ),
+                "elite_fallback_used": (
+                    elite_fallback_used
+                    if elite_fallback_used is not None
+                    else job.progress.elite_fallback_used
+                ),
+                "frozen_suite_summaries": dict(job.progress.frozen_suite_summaries),
             },
         )
 
@@ -682,6 +1286,13 @@ class TrainingJobService:
             tags={"active"},
         )
         self._league_service.register_bot(job.ruleset_id, seed_bot.bot_version_id, "active")
+
+    def _ensure_frozen_suites_bootstrap_locked(self, job: TrainingJob) -> None:
+        if self._frozen_benchmarks is None:
+            return
+        if job.ruleset_id != "classic_v1":
+            return
+        self._frozen_benchmarks.ensure_frozen_suites(job.ruleset_id, suite_tier="canonical")
 
     def _collect_top_league_opponents_locked(
         self,
@@ -992,12 +1603,33 @@ class TrainingJobService:
             "eval_window_batches": job.params.eval_window_batches,
             "population_size": job.params.population_size,
             "worker_count": job.params.worker_count,
+            "paired_eval": True,
+            "mirrored_first_player": True,
+            "eval_seed_scheme": "window_candidate_phase_v2",
             "quality_gate_games": strictness.quality_gate_games,
             "quality_gate_min_winrate": strictness.min_winrate,
             "quality_gate_min_lower_bound": strictness.min_lcb,
             "top_k_opponents": strictness.top_k_opponents,
             "league_only": strictness.league_only,
             "dual_seed": strictness.dual_seed,
+            "selection_policy": SELECTION_POLICY_VERSION,
+            "selection_robust_epsilon": ROBUST_EPSILON,
+            "selection_group_noninferiority_epsilon": GROUP_NONINFERIORITY_EPSILON,
+            "selection_attack_tiebreak_epsilon": ATTACK_TIEBREAK_EPSILON,
+            "selection_attack_weights": ATTACK_EFFICIENCY_WEIGHTS,
+            "search_policy": "sep_cma_es_lite_v1",
+            "search_parent_mu_rule": "max(2,floor((population_size-1)/4))",
+            "search_c_sigma": 0.3,
+            "search_d_sigma": 1.0,
+            "search_c_cov": 0.2,
+            "search_cma_sigma_init": 0.20,
+            "search_cma_sigma_min": 0.02,
+            "search_cma_sigma_max": 0.45,
+            "search_cma_diag_min": 0.05,
+            "search_cma_diag_max": 4.0,
+            "search_restart_semantics": "plateau_anchor_reseed_v1",
+            "search_restart_sigma": 0.12,
+            "search_restart_max_count": 3,
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]

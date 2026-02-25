@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
+  analyzePlacementBias,
   commandTrainingJob,
   connectEvents,
   createTrainingJob,
+  getLatestPlacementBiasReport,
   getRulesets,
   getTrainingCheckpoints,
   getTrainingJob,
@@ -11,6 +13,8 @@ import {
 } from '../../shared/api/client';
 import type {
   EventEnvelope,
+  FrozenSuiteSummaryDTO,
+  PlacementBiasReportDTO,
   RulesetDTO,
   TrainingCheckpointDTO,
   TrainingJobDTO,
@@ -43,6 +47,9 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
 };
 const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
+const CHART_WIDTH = 420;
+const CHART_HEIGHT = 120;
+
 type MetricPoint = {
   batch: number;
   window: number;
@@ -52,9 +59,56 @@ type MetricPoint = {
   cycle: number;
   strictness: number;
   windowEvaluated: boolean;
+  avgShotsToSinkAll: number;
+  p95ShotsToSinkAll: number;
+  avgShotsToFirstHit: number;
+  avgShotsAfterFirstHitToSinkAll: number;
+  selectionDecisionReason: string;
+  selectionTiebreakUsed: boolean;
+  selectionNoninferiorityPassed: boolean;
+  selectionRobustDelta: number;
+  selectionAttackDelta: number;
+  sigmaMean: number;
+  sigmaMin: number;
+  sigmaMax: number;
+  restartCount: number;
+  lastRestartReason: string;
+  lastRestartWindow: number;
+  eliteFallbackUsed: boolean;
 };
 
-function buildPolyline(
+type FrozenSummaryRow = {
+  suiteKind: string;
+  runId: string;
+  createdAt: string;
+  winrate: number;
+  lcb: number;
+  avgShotsToSinkAll: number;
+  p95ShotsToSinkAll: number;
+};
+
+function toNumber(value: string, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function readBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function formatNumber(value: number, digits = 4): string {
+  return Number.isFinite(value) ? value.toFixed(digits) : '-';
+}
+
+function buildPolylineScaled(
   points: MetricPoint[],
   valueGetter: (point: MetricPoint) => number,
   width: number,
@@ -64,27 +118,72 @@ function buildPolyline(
     return '';
   }
   const sorted = [...points].sort((left, right) => left.batch - right.batch);
-  if (sorted.length === 1) {
-    const value = Math.max(0, Math.min(1, valueGetter(sorted[0])));
-    const y = height - value * height;
-    return `0,${y.toFixed(2)} ${width},${y.toFixed(2)}`;
+  const values = sorted.map((item) => valueGetter(item)).filter((item) => Number.isFinite(item));
+  if (values.length === 0) {
+    return '';
   }
 
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = Math.max(1e-9, maxValue - minValue);
   const denominator = Math.max(1, sorted.length - 1);
   const coords: string[] = [];
+
   for (let index = 0; index < sorted.length; index += 1) {
     const point = sorted[index];
     const x = (index / denominator) * width;
-    const value = Math.max(0, Math.min(1, valueGetter(point)));
-    const y = height - value * height;
+    const raw = valueGetter(point);
+    const normalized = (raw - minValue) / range;
+    const y = height - normalized * height;
     coords.push(`${x.toFixed(2)},${y.toFixed(2)}`);
   }
   return coords.join(' ');
 }
 
-function toNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function pickCellColor(value: number, maxValue: number): string {
+  const safeMax = maxValue > 0 ? maxValue : 1;
+  const ratio = Math.max(0, Math.min(1, value / safeMax));
+  const lightness = 97 - ratio * 46;
+  return `hsl(164 46% ${lightness.toFixed(1)}%)`;
+}
+
+function HeatmapTable({ title, matrix }: { title: string; matrix: number[][] }) {
+  if (!Array.isArray(matrix) || matrix.length === 0) {
+    return (
+      <div className="heatmap-block">
+        <div className="training-chart-title">{title}</div>
+        <div className="inline-summary">Нет данных.</div>
+      </div>
+    );
+  }
+
+  const flatValues = matrix.flat().filter((item) => Number.isFinite(item));
+  const maxValue = flatValues.length > 0 ? Math.max(...flatValues) : 1;
+
+  return (
+    <div className="heatmap-block">
+      <div className="training-chart-title">{title}</div>
+      <div className="table-scroll">
+        <table className="heatmap-table">
+          <tbody>
+            {matrix.map((row, rowIndex) => (
+              <tr key={`hr-${rowIndex}`}>
+                {row.map((value, colIndex) => (
+                  <td
+                    key={`hc-${rowIndex}-${colIndex}`}
+                    style={{ backgroundColor: pickCellColor(readNumber(value), maxValue) }}
+                    title={`r${rowIndex} c${colIndex}: ${formatNumber(readNumber(value), 4)}`}
+                  >
+                    {formatNumber(readNumber(value), 2)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function TrainingPage() {
@@ -100,6 +199,14 @@ export function TrainingPage() {
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
   const [eventLines, setEventLines] = useState<string[]>([]);
   const [stageReason, setStageReason] = useState<string>('');
+
+  const [biasRulesetId, setBiasRulesetId] = useState('classic_v1');
+  const [biasSampleCount, setBiasSampleCount] = useState('5000');
+  const [biasSeedAnchor, setBiasSeedAnchor] = useState('');
+  const [biasReport, setBiasReport] = useState<PlacementBiasReportDTO | null>(null);
+  const [biasLoading, setBiasLoading] = useState(false);
+  const [biasStatus, setBiasStatus] = useState('');
+  const [biasError, setBiasError] = useState<string | null>(null);
 
   const [statusText, setStatusText] = useState('Загрузка профилей правил...');
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -156,6 +263,14 @@ export function TrainingPage() {
   }, []);
 
   useEffect(() => {
+    if (!seedBotVersionId.trim()) {
+      window.localStorage.removeItem(SEED_BOT_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(SEED_BOT_STORAGE_KEY, seedBotVersionId.trim());
+  }, [seedBotVersionId]);
+
+  useEffect(() => {
     let cancelled = false;
     let retryTimerId: number | null = null;
 
@@ -168,6 +283,12 @@ export function TrainingPage() {
         setRulesets(items);
         setErrorText(null);
         setSelectedRulesetId((prev) => {
+          if (items.length === 0) {
+            return prev;
+          }
+          return items.some((item) => item.id === prev) ? prev : items[0].id;
+        });
+        setBiasRulesetId((prev) => {
           if (items.length === 0) {
             return prev;
           }
@@ -274,22 +395,55 @@ export function TrainingPage() {
       });
 
       if (event.event_type === 'training.stage_changed') {
-        const reason = String(event.payload.reason ?? 'unknown');
+        const reason = readString(event.payload.reason, 'unknown');
         setStageReason(reason);
       }
 
+      if (event.event_type === 'training.frozen_suites_updated') {
+        const suiteSummaries = (event.payload.suite_summaries ?? {}) as Record<string, FrozenSuiteSummaryDTO>;
+        setJob((prev) => {
+          if (!prev || prev.id !== job.id) {
+            return prev;
+          }
+          return {
+            ...prev,
+            progress: {
+              ...prev.progress,
+              frozen_suite_summaries: suiteSummaries,
+            },
+          };
+        });
+      }
+
       if (event.event_type === 'training.metrics') {
-        const gamesPlayed = Number(event.payload.games_played ?? 0);
-        const batchesDone = Number(event.payload.batches_done ?? 0);
-        const windowsDone = Number(event.payload.windows_done ?? 0);
-        const score = Number(event.payload.score ?? 0);
-        const bestScore = Number(event.payload.best_score ?? 0);
-        const plateauWindows = Number(event.payload.plateau_windows ?? 0);
-        const cycleIndex = Number(event.payload.cycle_index ?? 0);
-        const strictnessLevel = Number(event.payload.strictness_level ?? 0);
-        const metaPlateauCounter = Number(event.payload.meta_plateau_counter ?? 0);
-        const championGateLcb = Number(event.payload.champion_gate_lcb ?? 0);
-        const evalProtocolHash = String(event.payload.eval_protocol_hash ?? '');
+        const gamesPlayed = readNumber(event.payload.games_played);
+        const batchesDone = readNumber(event.payload.batches_done);
+        const windowsDone = readNumber(event.payload.windows_done);
+        const score = readNumber(event.payload.score);
+        const bestScore = readNumber(event.payload.best_score);
+        const plateauWindows = readNumber(event.payload.plateau_windows);
+        const cycleIndex = readNumber(event.payload.cycle_index);
+        const strictnessLevel = readNumber(event.payload.strictness_level);
+        const metaPlateauCounter = readNumber(event.payload.meta_plateau_counter);
+        const championGateLcb = readNumber(event.payload.champion_gate_lcb);
+        const evalProtocolHash = readString(event.payload.eval_protocol_hash);
+        const avgShotsToSinkAll = readNumber(event.payload.avg_shots_to_sink_all);
+        const p95ShotsToSinkAll = readNumber(event.payload.p95_shots_to_sink_all);
+        const avgShotsToFirstHit = readNumber(event.payload.avg_shots_to_first_hit);
+        const avgShotsAfterFirstHitToSinkAll = readNumber(event.payload.avg_shots_after_first_hit_to_sink_all);
+        const selectionDecisionReason = readString(event.payload.selection_decision_reason, 'unknown');
+        const selectionTiebreakUsed = readBoolean(event.payload.selection_tiebreak_used);
+        const selectionNoninferiorityPassed = readBoolean(event.payload.selection_noninferiority_passed);
+        const selectionRobustDelta = readNumber(event.payload.selection_robust_delta);
+        const selectionAttackDelta = readNumber(event.payload.selection_attack_delta);
+        const sigmaMean = readNumber(event.payload.sigma_mean);
+        const sigmaMin = readNumber(event.payload.sigma_min);
+        const sigmaMax = readNumber(event.payload.sigma_max);
+        const restartCount = readNumber(event.payload.restart_count);
+        const lastRestartReason = readString(event.payload.last_restart_reason, 'none');
+        const lastRestartWindow = readNumber(event.payload.last_restart_window, -1);
+        const eliteFallbackUsed = readBoolean(event.payload.elite_fallback_used);
+        const frozenSuiteSummaries = (event.payload.frozen_suite_summaries ?? {}) as Record<string, FrozenSuiteSummaryDTO>;
 
         setJob((prev) => {
           if (!prev || prev.id !== job.id) {
@@ -310,6 +464,23 @@ export function TrainingPage() {
               meta_plateau_counter: metaPlateauCounter,
               champion_gate_lcb: championGateLcb,
               eval_protocol_hash: evalProtocolHash,
+              last_avg_shots_to_sink_all: avgShotsToSinkAll,
+              last_p95_shots_to_sink_all: p95ShotsToSinkAll,
+              last_avg_shots_to_first_hit: avgShotsToFirstHit,
+              last_avg_shots_after_first_hit_to_sink_all: avgShotsAfterFirstHitToSinkAll,
+              selection_decision_reason: selectionDecisionReason,
+              selection_tiebreak_used: selectionTiebreakUsed,
+              selection_noninferiority_passed: selectionNoninferiorityPassed,
+              selection_robust_delta: selectionRobustDelta,
+              selection_attack_delta: selectionAttackDelta,
+              sigma_mean: sigmaMean,
+              sigma_min: sigmaMin,
+              sigma_max: sigmaMax,
+              restart_count: restartCount,
+              last_restart_reason: lastRestartReason,
+              last_restart_window: lastRestartWindow,
+              elite_fallback_used: eliteFallbackUsed,
+              frozen_suite_summaries: frozenSuiteSummaries,
             },
           };
         });
@@ -322,7 +493,23 @@ export function TrainingPage() {
           plateau: plateauWindows,
           cycle: cycleIndex,
           strictness: strictnessLevel,
-          windowEvaluated: Boolean(event.payload.window_evaluated),
+          windowEvaluated: readBoolean(event.payload.window_evaluated),
+          avgShotsToSinkAll,
+          p95ShotsToSinkAll,
+          avgShotsToFirstHit,
+          avgShotsAfterFirstHitToSinkAll,
+          selectionDecisionReason,
+          selectionTiebreakUsed,
+          selectionNoninferiorityPassed,
+          selectionRobustDelta,
+          selectionAttackDelta,
+          sigmaMean,
+          sigmaMin,
+          sigmaMax,
+          restartCount,
+          lastRestartReason,
+          lastRestartWindow,
+          eliteFallbackUsed,
         };
         upsertMetric(point, job.id);
       }
@@ -346,6 +533,7 @@ export function TrainingPage() {
     if (!job || job.progress.batches_done <= 0) {
       return;
     }
+
     upsertMetric(
       {
         batch: job.progress.batches_done,
@@ -356,6 +544,22 @@ export function TrainingPage() {
         cycle: job.progress.cycle_index,
         strictness: job.progress.strictness_level,
         windowEvaluated: Boolean(job.progress.windows_done > 0 && job.progress.batches_done % job.params.eval_window_batches === 0),
+        avgShotsToSinkAll: readNumber(job.progress.last_avg_shots_to_sink_all),
+        p95ShotsToSinkAll: readNumber(job.progress.last_p95_shots_to_sink_all),
+        avgShotsToFirstHit: readNumber(job.progress.last_avg_shots_to_first_hit),
+        avgShotsAfterFirstHitToSinkAll: readNumber(job.progress.last_avg_shots_after_first_hit_to_sink_all),
+        selectionDecisionReason: readString(job.progress.selection_decision_reason, 'unknown'),
+        selectionTiebreakUsed: readBoolean(job.progress.selection_tiebreak_used),
+        selectionNoninferiorityPassed: readBoolean(job.progress.selection_noninferiority_passed),
+        selectionRobustDelta: readNumber(job.progress.selection_robust_delta),
+        selectionAttackDelta: readNumber(job.progress.selection_attack_delta),
+        sigmaMean: readNumber(job.progress.sigma_mean),
+        sigmaMin: readNumber(job.progress.sigma_min),
+        sigmaMax: readNumber(job.progress.sigma_max),
+        restartCount: readNumber(job.progress.restart_count),
+        lastRestartReason: readString(job.progress.last_restart_reason, 'none'),
+        lastRestartWindow: readNumber(job.progress.last_restart_window, -1),
+        eliteFallbackUsed: readBoolean(job.progress.elite_fallback_used),
       },
       job.id,
     );
@@ -369,6 +573,22 @@ export function TrainingPage() {
     job?.progress.cycle_index,
     job?.progress.strictness_level,
     job?.params.eval_window_batches,
+    job?.progress.last_avg_shots_to_sink_all,
+    job?.progress.last_p95_shots_to_sink_all,
+    job?.progress.last_avg_shots_to_first_hit,
+    job?.progress.last_avg_shots_after_first_hit_to_sink_all,
+    job?.progress.selection_decision_reason,
+    job?.progress.selection_tiebreak_used,
+    job?.progress.selection_noninferiority_passed,
+    job?.progress.selection_robust_delta,
+    job?.progress.selection_attack_delta,
+    job?.progress.sigma_mean,
+    job?.progress.sigma_min,
+    job?.progress.sigma_max,
+    job?.progress.restart_count,
+    job?.progress.last_restart_reason,
+    job?.progress.last_restart_window,
+    job?.progress.elite_fallback_used,
   ]);
 
   const canPause = job?.lifecycle_state === 'Running';
@@ -377,9 +597,55 @@ export function TrainingPage() {
 
   const windowMetrics = useMemo(() => metrics.filter((point) => point.windowEvaluated), [metrics]);
   const latestMetrics = useMemo(() => windowMetrics.slice(0, 10), [windowMetrics]);
-  const chartPoints = useMemo(() => windowMetrics.slice(0, 80), [windowMetrics]);
-  const scorePolyline = useMemo(() => buildPolyline(chartPoints, (point) => point.score, 420, 120), [chartPoints]);
-  const bestPolyline = useMemo(() => buildPolyline(chartPoints, (point) => point.best, 420, 120), [chartPoints]);
+  const chartPoints = useMemo(() => windowMetrics.slice(0, 80).reverse(), [windowMetrics]);
+  const latestPoint = latestMetrics[0] ?? null;
+
+  const scorePolyline = useMemo(
+    () => buildPolylineScaled(chartPoints, (point) => point.score, CHART_WIDTH, CHART_HEIGHT),
+    [chartPoints],
+  );
+  const bestPolyline = useMemo(
+    () => buildPolylineScaled(chartPoints, (point) => point.best, CHART_WIDTH, CHART_HEIGHT),
+    [chartPoints],
+  );
+  const avgShotsPolyline = useMemo(
+    () => buildPolylineScaled(chartPoints, (point) => point.avgShotsToSinkAll, CHART_WIDTH, CHART_HEIGHT),
+    [chartPoints],
+  );
+  const p95ShotsPolyline = useMemo(
+    () => buildPolylineScaled(chartPoints, (point) => point.p95ShotsToSinkAll, CHART_WIDTH, CHART_HEIGHT),
+    [chartPoints],
+  );
+  const sigmaPolyline = useMemo(
+    () => buildPolylineScaled(chartPoints, (point) => point.sigmaMean, CHART_WIDTH, CHART_HEIGHT),
+    [chartPoints],
+  );
+
+  const frozenSummaryRows = useMemo((): FrozenSummaryRow[] => {
+    const raw = job?.progress.frozen_suite_summaries;
+    if (!raw) {
+      return [];
+    }
+
+    return Object.entries(raw)
+      .map(([suiteKind, summary]) => ({
+        suiteKind,
+        runId: readString(summary.run_id),
+        createdAt: readString(summary.created_at),
+        winrate: readNumber(summary.winrate),
+        lcb: readNumber(summary.lcb),
+        avgShotsToSinkAll: readNumber(summary.avg_shots_to_sink_all),
+        p95ShotsToSinkAll: readNumber(summary.p95_shots_to_sink_all),
+      }))
+      .sort((left, right) => left.suiteKind.localeCompare(right.suiteKind));
+  }, [job?.progress.frozen_suite_summaries]);
+
+  const occupancyByLenEntries = useMemo(() => {
+    if (!biasReport) {
+      return [];
+    }
+    return Object.entries(biasReport.occupancy_by_ship_len).sort(([left], [right]) => Number(right) - Number(left));
+  }, [biasReport]);
 
   async function onStartTraining() {
     if (isBusy) {
@@ -455,6 +721,43 @@ export function TrainingPage() {
     }
   }
 
+  async function onAnalyzeBias() {
+    setBiasLoading(true);
+    setBiasError(null);
+    setBiasStatus('Запуск bias-анализа...');
+    try {
+      const report = await analyzePlacementBias({
+        ruleset_id: biasRulesetId,
+        sample_count: Math.max(1, Math.floor(toNumber(biasSampleCount, 5000))),
+        seed_anchor: biasSeedAnchor.trim() ? Math.floor(toNumber(biasSeedAnchor, 0)) : null,
+      });
+      setBiasReport(report);
+      setBiasStatus(`Bias-отчёт построен: ${report.report_id}`);
+    } catch (error) {
+      setBiasError((error as Error).message);
+      setBiasStatus('Ошибка bias-анализа.');
+    } finally {
+      setBiasLoading(false);
+    }
+  }
+
+  async function onLoadLatestBias() {
+    setBiasLoading(true);
+    setBiasError(null);
+    setBiasStatus('Загрузка последнего bias-отчёта...');
+    try {
+      const report = await getLatestPlacementBiasReport(biasRulesetId);
+      setBiasReport(report);
+      setBiasStatus(`Загружен последний отчёт: ${report.report_id}`);
+    } catch (error) {
+      setBiasError((error as Error).message);
+      setBiasStatus('Последний отчёт не найден.');
+      setBiasReport(null);
+    } finally {
+      setBiasLoading(false);
+    }
+  }
+
   return (
     <section className="screen-layout">
       <aside className="panel controls">
@@ -483,12 +786,7 @@ export function TrainingPage() {
 
         <label>
           Сид
-          <input
-            aria-label="Сид"
-            value={seedInput}
-            onChange={(event) => setSeedInput(event.target.value)}
-            disabled={isBusy}
-          />
+          <input aria-label="Сид" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} disabled={isBusy} />
         </label>
 
         <label>
@@ -783,25 +1081,52 @@ export function TrainingPage() {
       <div className="screen-content">
         <section className="panel">
           <h3>Метрики в реальном времени</h3>
-          <div className="inline-summary">
-            В таблице и графиках показаны только финальные точки окон оценки.
-          </div>
+          <div className="inline-summary">В графиках и таблицах используются только финальные точки окон оценки.</div>
           <div className="training-charts" data-testid="training-charts">
             <div className="training-chart">
               <div className="training-chart-title">Score</div>
-              <svg viewBox="0 0 420 120" aria-label="График score">
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} aria-label="График score">
                 <polyline className="chart-line-score" points={scorePolyline} />
               </svg>
             </div>
             <div className="training-chart">
               <div className="training-chart-title">Best Score</div>
-              <svg viewBox="0 0 420 120" aria-label="График best score">
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} aria-label="График best score">
                 <polyline className="chart-line-best" points={bestPolyline} />
               </svg>
             </div>
+            <div className="training-chart">
+              <div className="training-chart-title">avg_shots_to_sink_all</div>
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} aria-label="График avg_shots_to_sink_all">
+                <polyline className="chart-line-attack" points={avgShotsPolyline} />
+              </svg>
+            </div>
+            <div className="training-chart">
+              <div className="training-chart-title">p95_shots_to_sink_all</div>
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} aria-label="График p95_shots_to_sink_all">
+                <polyline className="chart-line-attack-p95" points={p95ShotsPolyline} />
+              </svg>
+            </div>
+            <div className="training-chart">
+              <div className="training-chart-title">sigma_mean</div>
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} aria-label="График sigma_mean">
+                <polyline className="chart-line-sigma" points={sigmaPolyline} />
+              </svg>
+            </div>
           </div>
-          <table className="data-table" data-testid="training-metrics-table">
-            <thead>
+
+          {latestPoint && (
+            <div className="inline-summary">
+              Последнее решение: {latestPoint.selectionDecisionReason} | tiebreak:{' '}
+              {latestPoint.selectionTiebreakUsed ? 'yes' : 'no'} | noninferiority:{' '}
+              {latestPoint.selectionNoninferiorityPassed ? 'pass' : 'fail'} | Δrobust:{' '}
+              {formatNumber(latestPoint.selectionRobustDelta, 4)} | Δattack: {formatNumber(latestPoint.selectionAttackDelta, 4)}
+            </div>
+          )}
+
+          <div className="table-scroll">
+            <table className="data-table" data-testid="training-metrics-table">
+              <thead>
                 <tr>
                   <th>Батч</th>
                   <th>Окно</th>
@@ -810,33 +1135,73 @@ export function TrainingPage() {
                   <th>Счёт</th>
                   <th>Лучший</th>
                   <th>Плато</th>
+                  <th>avg_sink</th>
+                  <th>p95_sink</th>
+                  <th>avg_first_hit</th>
+                  <th>avg_after_hit</th>
+                  <th>Decision</th>
+                  <th>Tie</th>
+                  <th>NI</th>
+                  <th>Δrobust</th>
+                  <th>Δattack</th>
+                  <th>σmean</th>
+                  <th>σmin</th>
+                  <th>σmax</th>
+                  <th>Restarts</th>
+                  <th>Last restart</th>
+                  <th>Fallback</th>
                 </tr>
-            </thead>
-            <tbody>
-              {latestMetrics.map((point) => (
-                <tr key={`m-${point.batch}-${point.window}`}>
-                  <td>{point.batch}</td>
-                  <td>{point.window}</td>
-                  <td>{point.cycle}</td>
-                  <td>{point.strictness}</td>
-                  <td>{point.score.toFixed(4)}</td>
-                  <td>{point.best.toFixed(4)}</td>
-                  <td>{point.plateau}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {latestMetrics.map((point) => (
+                  <tr key={`m-${point.batch}-${point.window}`}>
+                    <td>{point.batch}</td>
+                    <td>{point.window}</td>
+                    <td>{point.cycle}</td>
+                    <td>{point.strictness}</td>
+                    <td>{formatNumber(point.score, 4)}</td>
+                    <td>{formatNumber(point.best, 4)}</td>
+                    <td>{point.plateau}</td>
+                    <td>{formatNumber(point.avgShotsToSinkAll, 2)}</td>
+                    <td>{formatNumber(point.p95ShotsToSinkAll, 2)}</td>
+                    <td>{formatNumber(point.avgShotsToFirstHit, 2)}</td>
+                    <td>{formatNumber(point.avgShotsAfterFirstHitToSinkAll, 2)}</td>
+                    <td>{point.selectionDecisionReason}</td>
+                    <td>{point.selectionTiebreakUsed ? 'yes' : 'no'}</td>
+                    <td>{point.selectionNoninferiorityPassed ? 'pass' : 'fail'}</td>
+                    <td>{formatNumber(point.selectionRobustDelta, 4)}</td>
+                    <td>{formatNumber(point.selectionAttackDelta, 4)}</td>
+                    <td>{formatNumber(point.sigmaMean, 4)}</td>
+                    <td>{formatNumber(point.sigmaMin, 4)}</td>
+                    <td>{formatNumber(point.sigmaMax, 4)}</td>
+                    <td>{point.restartCount}</td>
+                    <td>
+                      {point.lastRestartReason}
+                      {point.lastRestartWindow >= 0 ? `@${point.lastRestartWindow}` : ''}
+                    </td>
+                    <td>{point.eliteFallbackUsed ? 'yes' : 'no'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {job && (
             <div className="inline-summary">
-              Игры: {job.progress.games_played} | Батчи: {job.progress.batches_done} | Лучший:{' '}
-              {job.progress.best_score.toFixed(4)}
+              Игры: {job.progress.games_played} | Батчи: {job.progress.batches_done} | Лучший: {job.progress.best_score.toFixed(4)}
             </div>
           )}
           {job && (
             <div className="inline-summary">
               Цикл: {job.progress.cycle_index} | Уровень строгости: {job.progress.strictness_level} | Метаплато:{' '}
               {job.progress.meta_plateau_counter} | LCB чемпиона: {job.progress.champion_gate_lcb.toFixed(4)}
+            </div>
+          )}
+          {job && (
+            <div className="inline-summary">
+              Search: σmean={formatNumber(readNumber(job.progress.sigma_mean), 4)}; σmin={formatNumber(readNumber(job.progress.sigma_min), 4)};
+              σmax={formatNumber(readNumber(job.progress.sigma_max), 4)}; restarts={readNumber(job.progress.restart_count)}; reason=
+              {readString(job.progress.last_restart_reason, 'none')}; window={readNumber(job.progress.last_restart_window, -1)}
             </div>
           )}
           {job && <div className="inline-summary">Протокол eval: {job.progress.eval_protocol_hash || '-'}</div>}
@@ -849,38 +1214,192 @@ export function TrainingPage() {
         </section>
 
         <section className="panel">
+          <h3>Frozen Benchmarks (последние)</h3>
+          {frozenSummaryRows.length === 0 ? (
+            <div className="inline-summary">Пока нет frozen suite результатов для текущего job/checkpoint.</div>
+          ) : (
+            <div className="table-scroll">
+              <table className="data-table" data-testid="training-frozen-summaries-table">
+                <thead>
+                  <tr>
+                    <th>Suite</th>
+                    <th>Run ID</th>
+                    <th>Время</th>
+                    <th>Winrate</th>
+                    <th>LCB</th>
+                    <th>avg_sink</th>
+                    <th>p95_sink</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {frozenSummaryRows.map((row) => (
+                    <tr key={`${row.suiteKind}-${row.runId}`}>
+                      <td>{row.suiteKind}</td>
+                      <td>{row.runId || '-'}</td>
+                      <td>{row.createdAt || '-'}</td>
+                      <td>{formatNumber(row.winrate, 4)}</td>
+                      <td>{formatNumber(row.lcb, 4)}</td>
+                      <td>{formatNumber(row.avgShotsToSinkAll, 2)}</td>
+                      <td>{formatNumber(row.p95ShotsToSinkAll, 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
           <h3>Чекпоинты</h3>
-          <table className="data-table" data-testid="training-checkpoints-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Батчи</th>
-                <th>Игры</th>
-                <th>Лучший</th>
-                <th>Действие</th>
-              </tr>
-            </thead>
-            <tbody>
-              {checkpoints.map((checkpoint) => (
-                <tr key={checkpoint.checkpoint_id}>
-                  <td>{checkpoint.checkpoint_id}</td>
-                  <td>{checkpoint.batches_done}</td>
-                  <td>{checkpoint.games_played}</td>
-                  <td>{checkpoint.best_score.toFixed(4)}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="mini-btn"
-                      onClick={() => onLoadCheckpoint(checkpoint.checkpoint_id)}
-                      disabled={isBusy || !job || ['Running', 'Pausing', 'Stopping'].includes(job.lifecycle_state)}
-                    >
-                      Загрузить
-                    </button>
-                  </td>
+          <div className="table-scroll">
+            <table className="data-table" data-testid="training-checkpoints-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Батчи</th>
+                  <th>Игры</th>
+                  <th>Лучший</th>
+                  <th>Действие</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {checkpoints.map((checkpoint) => (
+                  <tr key={checkpoint.checkpoint_id}>
+                    <td>{checkpoint.checkpoint_id}</td>
+                    <td>{checkpoint.batches_done}</td>
+                    <td>{checkpoint.games_played}</td>
+                    <td>{checkpoint.best_score.toFixed(4)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        onClick={() => onLoadCheckpoint(checkpoint.checkpoint_id)}
+                        disabled={isBusy || !job || ['Running', 'Pausing', 'Stopping'].includes(job.lifecycle_state)}
+                      >
+                        Загрузить
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="panel" data-testid="placement-bias-panel">
+          <h3>Bias-диагностика расстановки</h3>
+          <div className="training-bias-controls">
+            <label>
+              Ruleset
+              <select value={biasRulesetId} onChange={(event) => setBiasRulesetId(event.target.value)}>
+                {rulesets.map((item) => (
+                  <option key={`bias-${item.id}`} value={item.id}>
+                    {item.name} ({item.id})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              sample_count
+              <input value={biasSampleCount} onChange={(event) => setBiasSampleCount(event.target.value)} />
+            </label>
+            <label>
+              seed_anchor (optional)
+              <input value={biasSeedAnchor} onChange={(event) => setBiasSeedAnchor(event.target.value)} />
+            </label>
+            <div className="button-row">
+              <button type="button" onClick={onAnalyzeBias} disabled={biasLoading || rulesets.length === 0}>
+                Analyze
+              </button>
+              <button type="button" className="ghost-btn" onClick={onLoadLatestBias} disabled={biasLoading || rulesets.length === 0}>
+                Load latest
+              </button>
+            </div>
+          </div>
+
+          {biasStatus && <div className="inline-summary">{biasStatus}</div>}
+          {biasError && <div role="alert">{biasError}</div>}
+
+          {!biasReport && <div className="inline-summary">Отчёт не загружен. Запустите анализ или загрузите последний отчёт.</div>}
+
+          {biasReport && (
+            <>
+              <div className="inline-summary">
+                ruleset={biasReport.ruleset_id}; sample_count={biasReport.sample_count}; seed_anchor={biasReport.seed_anchor};
+                scheme={biasReport.seed_derivation_scheme}; generator={biasReport.generator_version}; created_at={biasReport.created_at}
+              </div>
+              <div className="inline-summary">
+                reproducibility: {JSON.stringify(biasReport.seed_reproducibility_check)}
+              </div>
+
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Метрика</th>
+                      <th>Значение</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(biasReport.edge_center_bias).map(([key, value]) => (
+                      <tr key={`ec-${key}`}>
+                        <td>edge_center_bias.{key}</td>
+                        <td>{formatNumber(readNumber(value), 6)}</td>
+                      </tr>
+                    ))}
+                    {Object.entries(biasReport.corner_bias).map(([key, value]) => (
+                      <tr key={`corner-${key}`}>
+                        <td>corner_bias.{key}</td>
+                        <td>{formatNumber(readNumber(value), 6)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td>retry_stats</td>
+                      <td>{JSON.stringify(biasReport.retry_stats)}</td>
+                    </tr>
+                    {readBoolean((biasReport.retry_stats as Record<string, unknown>).unavailable) && (
+                      <tr>
+                        <td>retry_stats.unavailable</td>
+                        <td>true</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>ship_len</th>
+                      <th>horizontal</th>
+                      <th>vertical</th>
+                      <th>count</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(biasReport.orientation_stats_by_len)
+                      .sort(([left], [right]) => Number(right) - Number(left))
+                      .map(([shipLen, stats]) => (
+                        <tr key={`orientation-${shipLen}`}>
+                          <td>{shipLen}</td>
+                          <td>{formatNumber(readNumber(stats.horizontal), 6)}</td>
+                          <td>{formatNumber(readNumber(stats.vertical), 6)}</td>
+                          <td>{readNumber(stats.count)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="heatmap-grid">
+                <HeatmapTable title="occupancy_heatmap" matrix={biasReport.occupancy_heatmap} />
+                {occupancyByLenEntries.map(([shipLen, matrix]) => (
+                  <HeatmapTable key={`ship-len-${shipLen}`} title={`occupancy_by_ship_len[${shipLen}]`} matrix={matrix} />
+                ))}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="panel">

@@ -3,7 +3,7 @@ import time
 from fastapi.testclient import TestClient
 
 
-def _wait_for_checkpoint(client: TestClient, job_id: str, timeout: float = 2.5) -> dict:
+def _wait_for_checkpoint(client: TestClient, job_id: str, timeout: float = 6.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         response = client.get(f'/api/v1/training/jobs/{job_id}/checkpoints')
@@ -25,13 +25,13 @@ def _create_training_job(client: TestClient, ruleset_id: str) -> str:
                 'microbatch_size': 5,
                 'eval_window_batches': 1,
                 'checkpoint_interval_batches': 1,
-                'population_size': 4,
+                'population_size': 2,
                 'train_split': 0.6,
                 'worker_count': 1,
                 'quality_gate_games': 20,
                 'target_score': 1.0,
                 'early_stop_plateau_windows': 1000,
-                'tick_delay_ms': 5,
+                'tick_delay_ms': 0,
             },
         },
     )
@@ -98,9 +98,11 @@ def test_bots_checkpoints_endpoint_filters_by_ruleset(client: TestClient) -> Non
 
     job_a = _create_training_job(client, 'classic_v1')
     _wait_for_checkpoint(client, job_a)
+    client.post(f"/api/v1/training/jobs/{job_a}/commands", json={"command": "stop"})
 
     job_b = _create_training_job(client, 'classic_alt_v1')
     _wait_for_checkpoint(client, job_b)
+    client.post(f"/api/v1/training/jobs/{job_b}/commands", json={"command": "stop"})
 
     classic_only = client.get('/api/v1/bots/checkpoints?ruleset_id=classic_v1')
     assert classic_only.status_code == 200

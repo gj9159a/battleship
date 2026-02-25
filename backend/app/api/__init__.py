@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from .routes_benchmarks import router as benchmarks_router
 from .routes_bots import router as bots_router
 from .routes_game import router as game_router
 from .routes_health import router as health_router
@@ -10,6 +11,7 @@ from .ws import router as ws_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
+api_router.include_router(benchmarks_router)
 api_router.include_router(bots_router)
 api_router.include_router(rulesets_router)
 api_router.include_router(game_router)

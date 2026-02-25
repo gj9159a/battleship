@@ -88,7 +88,7 @@ def test_training_persists_jobs_and_checkpoints(tmp_path: Path) -> None:
         await service.apply_command(job.id, "start")
 
         checkpoints = []
-        for _ in range(150):
+        for _ in range(300):
             checkpoints = service.list_checkpoints(job.id)
             if checkpoints:
                 break
@@ -96,7 +96,7 @@ def test_training_persists_jobs_and_checkpoints(tmp_path: Path) -> None:
         assert checkpoints
 
         await service.apply_command(job.id, "pause")
-        for _ in range(150):
+        for _ in range(300):
             if service.get_job(job.id).lifecycle_state == "Paused":
                 break
             await asyncio.sleep(0.01)

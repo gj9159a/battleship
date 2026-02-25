@@ -1,6 +1,14 @@
 from fastapi import Request
 
-from app.services import BotCatalogService, EventBus, GameSessionService, LeagueService, TrainingJobService
+from app.services import (
+    BotCatalogService,
+    EventBus,
+    FrozenBenchmarkService,
+    GameSessionService,
+    LeagueService,
+    PlacementDiagnosticsService,
+    TrainingJobService,
+)
 
 
 def get_game_sessions(request: Request) -> GameSessionService:
@@ -21,3 +29,11 @@ def get_league_service(request: Request) -> LeagueService:
 
 def get_event_bus(request: Request) -> EventBus:
     return request.app.state.event_bus
+
+
+def get_frozen_benchmarks(request: Request) -> FrozenBenchmarkService:
+    return request.app.state.frozen_benchmarks
+
+
+def get_placement_diagnostics(request: Request) -> PlacementDiagnosticsService:
+    return request.app.state.placement_diagnostics
