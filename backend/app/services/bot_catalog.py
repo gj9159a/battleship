@@ -97,6 +97,7 @@ class BotCatalogService:
         policy_type: str,
         feature_schema_version: str,
         lookahead_policy_version: str,
+        tags: set[str] | None = None,
     ) -> BotVersion:
         get_ruleset(ruleset_id)
 
@@ -113,12 +114,27 @@ class BotCatalogService:
                 weights=normalize_weights(weights),
                 source_job_id=checkpoint.job_id if checkpoint is not None else None,
                 source_checkpoint_id=checkpoint.checkpoint_id if checkpoint is not None else None,
-                tags=set(),
+                tags=set(tags or set()),
             )
             self._bots[created.bot_version_id] = created
             if self._store is not None:
                 self._store.upsert_bot_version(created)
             return created
+
+    def mark_eval_protocol(self, bot_version_id: str, eval_protocol_hash: str) -> BotVersion:
+        with self._lock:
+            current = self._bots.get(bot_version_id)
+            if current is None:
+                raise KeyError(f"Unknown bot_version_id={bot_version_id}")
+
+            tags = {tag for tag in current.tags if not tag.startswith("eval_protocol:")}
+            tags.add(f"eval_protocol:{eval_protocol_hash}")
+
+            updated = replace(current, tags=tags)
+            self._bots[bot_version_id] = updated
+            if self._store is not None:
+                self._store.upsert_bot_version(updated)
+            return updated
 
     def update_labels(
         self,

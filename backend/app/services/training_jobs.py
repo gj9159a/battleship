@@ -56,6 +56,7 @@ class TrainingJobService:
     _TOP_K_OPPONENTS = 16
     _PROMOTE_EVERY_WINDOWS = 4
     _PLATEAU_POPULATION_STEP = 8
+    _PROMOTION_MATCHES_PER_OPPONENT = 2
 
     def __init__(
         self,
@@ -1181,6 +1182,7 @@ class TrainingJobService:
                 policy_type="probability_strong",
                 feature_schema_version="classic_features_v1",
                 lookahead_policy_version="adaptive_v1",
+                tags={"active", f"eval_protocol:{protocol_hash_before}"},
             )
         except ValueError:
             return
@@ -1215,6 +1217,7 @@ class TrainingJobService:
                 "cycle_index": job.progress.cycle_index,
             },
         )
+        self._maybe_rebench_league_mismatch_locked(job)
 
     def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
         if self._bot_catalog is None or self._league_service is None:
@@ -1224,11 +1227,9 @@ class TrainingJobService:
             table = self._league_service.list_table(job.ruleset_id)
         except KeyError:
             return
-        opponents = [
-            row.bot_version_id
-            for row in table
-            if row.bot_version_id != candidate_id and row.pool_type in {"league", "baseline", "active"}
-        ][: self._TOP_K_OPPONENTS]
+        league_opponents = [row.bot_version_id for row in table if row.pool_type == "league" and row.bot_version_id != candidate_id]
+        baseline_opponents = [row.bot_version_id for row in table if row.pool_type == "baseline" and row.bot_version_id != candidate_id]
+        opponents = (league_opponents + baseline_opponents)[: self._TOP_K_OPPONENTS]
 
         if not opponents:
             return
@@ -1243,22 +1244,103 @@ class TrainingJobService:
             except KeyError:
                 continue
 
-            rng = random.Random(job.seed * 1000 + job.progress.windows_done * 37 + idx)
-            result = play_strong_vs(
-                ruleset,
-                rng,
-                strong_weights=candidate_weights,
-                opponent_kind="strong",
-                opponent_weights=opponent.weights,
-                first_player=idx % 2,
-            )
-            winner_id = candidate_id if result.winner == 0 else opponent_id
-            self._league_service.record_match(
-                ruleset_id=job.ruleset_id,
-                bot_a_id=candidate_id,
-                bot_b_id=opponent_id,
-                winner_id=winner_id,
-            )
+            for mirror in range(self._PROMOTION_MATCHES_PER_OPPONENT):
+                rng = random.Random(job.seed * 1000 + job.progress.windows_done * 37 + idx * 13 + mirror)
+                result = play_strong_vs(
+                    ruleset,
+                    rng,
+                    strong_weights=candidate_weights,
+                    opponent_kind="strong",
+                    opponent_weights=opponent.weights,
+                    first_player=(idx + mirror) % 2,
+                )
+                winner_id = candidate_id if result.winner == 0 else opponent_id
+                self._league_service.record_match(
+                    ruleset_id=job.ruleset_id,
+                    bot_a_id=candidate_id,
+                    bot_b_id=opponent_id,
+                    winner_id=winner_id,
+                )
+
+    def _maybe_rebench_league_mismatch_locked(self, job: TrainingJob) -> None:
+        if self._bot_catalog is None or self._league_service is None:
+            return
+
+        current_protocol = job.progress.eval_protocol_hash
+        if not current_protocol:
+            return
+
+        try:
+            table = self._league_service.list_table(job.ruleset_id)
+        except KeyError:
+            return
+
+        top16 = [row.bot_version_id for row in table if row.pool_type == "league"][:16]
+        if not top16:
+            return
+
+        mismatched: list[str] = []
+        for bot_id in top16:
+            try:
+                bot = self._bot_catalog.get_bot(bot_id)
+            except KeyError:
+                continue
+            protocol_tags = [tag for tag in bot.tags if tag.startswith("eval_protocol:")]
+            current_tag = protocol_tags[0] if protocol_tags else ""
+            if current_tag != f"eval_protocol:{current_protocol}":
+                mismatched.append(bot_id)
+
+        if not mismatched:
+            return
+
+        try:
+            ruleset = get_ruleset(job.ruleset_id)
+        except KeyError:
+            return
+
+        boundary_id = top16[-1]
+        for idx, bot_id in enumerate(mismatched):
+            try:
+                bot = self._bot_catalog.get_bot(bot_id)
+            except KeyError:
+                continue
+
+            opponent_ids = [op for op in [f"{job.ruleset_id}-baseline-strong", boundary_id] if op != bot_id]
+            for opp_index, opponent_id in enumerate(opponent_ids):
+                try:
+                    opponent = self._bot_catalog.get_bot(opponent_id)
+                except KeyError:
+                    continue
+                for mirror in range(self._PROMOTION_MATCHES_PER_OPPONENT):
+                    rng = random.Random(
+                        job.seed * 1000 + job.progress.windows_done * 97 + idx * 31 + opp_index * 7 + mirror
+                    )
+                    result = play_strong_vs(
+                        ruleset,
+                        rng,
+                        strong_weights=bot.weights,
+                        opponent_kind="strong",
+                        opponent_weights=opponent.weights,
+                        first_player=mirror % 2,
+                    )
+                    winner_id = bot_id if result.winner == 0 else opponent_id
+                    self._league_service.record_match(
+                        ruleset_id=job.ruleset_id,
+                        bot_a_id=bot_id,
+                        bot_b_id=opponent_id,
+                        winner_id=winner_id,
+                    )
+            self._bot_catalog.mark_eval_protocol(bot_id, current_protocol)
+
+        self._event_bus.publish_sync(
+            event_type="training.league_rebench",
+            entity_id=job.id,
+            ruleset_id=job.ruleset_id,
+            payload={
+                "eval_protocol_hash": current_protocol,
+                "rebench_count": len(mismatched),
+            },
+        )
 
     def _compute_eval_protocol_hash(self, job: TrainingJob) -> str:
         payload = {
