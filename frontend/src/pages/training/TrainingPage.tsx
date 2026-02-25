@@ -7,16 +7,13 @@ import {
   createTrainingJob,
   getLatestPlacementBiasReport,
   getRulesets,
-  getTrainingCheckpoints,
   getTrainingJob,
-  loadTrainingCheckpoint,
 } from '../../shared/api/client';
 import type {
   EventEnvelope,
   FrozenSuiteSummaryDTO,
   PlacementBiasReportDTO,
   RulesetDTO,
-  TrainingCheckpointDTO,
   TrainingJobDTO,
   TrainingParamsDTO,
 } from '../../shared/api/types';
@@ -195,7 +192,6 @@ export function TrainingPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [job, setJob] = useState<TrainingJobDTO | null>(null);
-  const [checkpoints, setCheckpoints] = useState<TrainingCheckpointDTO[]>([]);
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
   const [eventLines, setEventLines] = useState<string[]>([]);
   const [stageReason, setStageReason] = useState<string>('');
@@ -228,10 +224,6 @@ export function TrainingPage() {
           return;
         }
         setJob(restored);
-        await refreshCheckpoints(restored.id);
-        if (cancelled) {
-          return;
-        }
         const raw = window.localStorage.getItem(`${METRICS_STORAGE_KEY_PREFIX}${restored.id}`);
         if (raw) {
           try {
@@ -334,11 +326,6 @@ export function TrainingPage() {
     return fresh;
   }
 
-  async function refreshCheckpoints(jobId: string): Promise<void> {
-    const items = await getTrainingCheckpoints(jobId);
-    setCheckpoints(items);
-  }
-
   function upsertMetric(point: MetricPoint, jobId: string) {
     setMetrics((prev) => {
       const currentByBatch = new Map(prev.map((item) => [item.batch, item]));
@@ -368,9 +355,6 @@ export function TrainingPage() {
     const timer = window.setInterval(() => {
       void refreshJob(job.id).catch(() => {
         // Keep previous state on transient polling errors.
-      });
-      void refreshCheckpoints(job.id).catch(() => {
-        // Keep previous checkpoint list on transient polling errors.
       });
     }, 400);
 
@@ -517,11 +501,8 @@ export function TrainingPage() {
         upsertMetric(point, job.id);
       }
 
-      if (event.event_type === 'job.lifecycle_changed' || event.event_type === 'training.checkpoint_created') {
+      if (event.event_type === 'job.lifecycle_changed') {
         void refreshJob(job.id).catch(() => {
-          // No-op.
-        });
-        void refreshCheckpoints(job.id).catch(() => {
           // No-op.
         });
       }
@@ -662,7 +643,6 @@ export function TrainingPage() {
       window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${job.id}`);
     }
     setEventLines([]);
-    setCheckpoints([]);
     setStageReason('');
 
     try {
@@ -676,7 +656,6 @@ export function TrainingPage() {
       setJob(started);
       window.localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, started.id);
       window.localStorage.removeItem(`${METRICS_STORAGE_KEY_PREFIX}${started.id}`);
-      await refreshCheckpoints(started.id);
       setStatusText(`Тренировка запущена (${started.id}).`);
     } catch (error) {
       setErrorText((error as Error).message);
@@ -700,25 +679,6 @@ export function TrainingPage() {
     } catch (error) {
       setErrorText((error as Error).message);
       setStatusText(`Ошибка команды ${command}.`);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function onLoadCheckpoint(checkpointId: string) {
-    if (!job || isBusy) {
-      return;
-    }
-    setIsBusy(true);
-    setErrorText(null);
-
-    try {
-      const loaded = await loadTrainingCheckpoint(job.id, checkpointId);
-      setJob(loaded);
-      setStatusText(`Чекпоинт ${checkpointId} загружен.`);
-    } catch (error) {
-      setErrorText((error as Error).message);
-      setStatusText('Ошибка загрузки чекпоинта.');
     } finally {
       setIsBusy(false);
     }
@@ -814,20 +774,6 @@ export function TrainingPage() {
           />
         </label>
 
-        <label>
-          Интервал чекпоинтов
-          <input
-            aria-label="Интервал чекпоинтов"
-            value={params.checkpoint_interval_batches}
-            onChange={(event) =>
-              setParams((prev) => ({
-                ...prev,
-                checkpoint_interval_batches: toNumber(event.target.value, prev.checkpoint_interval_batches),
-              }))
-            }
-          />
-        </label>
-
         <button type="button" className="ghost-btn" onClick={() => setShowAdvanced((prev) => !prev)}>
           {showAdvanced ? 'Скрыть расширенные настройки' : 'Показать расширенные настройки'}
         </button>
@@ -863,48 +809,6 @@ export function TrainingPage() {
                 value={params.worker_count}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, worker_count: toNumber(event.target.value, prev.worker_count) }))
-                }
-              />
-            </label>
-
-            <label>
-              Игр quality gate
-              <input
-                aria-label="Игр quality gate"
-                value={params.quality_gate_games}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    quality_gate_games: toNumber(event.target.value, prev.quality_gate_games),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Мин. winrate quality gate
-              <input
-                aria-label="Мин. winrate quality gate"
-                value={params.quality_gate_min_winrate}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    quality_gate_min_winrate: toNumber(event.target.value, prev.quality_gate_min_winrate),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Мин. нижняя граница quality gate
-              <input
-                aria-label="Мин. нижняя граница quality gate"
-                value={params.quality_gate_min_lower_bound}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    quality_gate_min_lower_bound: toNumber(event.target.value, prev.quality_gate_min_lower_bound),
-                  }))
                 }
               />
             </label>
@@ -969,34 +873,6 @@ export function TrainingPage() {
                   setParams((prev) => ({
                     ...prev,
                     plateau_patience_windows: toNumber(event.target.value, prev.plateau_patience_windows),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Ранний стоп: плато (окон)
-              <input
-                aria-label="Ранний стоп плато"
-                value={params.early_stop_plateau_windows}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    early_stop_plateau_windows: toNumber(event.target.value, prev.early_stop_plateau_windows),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Мин. окон до early stop
-              <input
-                aria-label="Мин. окон до early stop"
-                value={params.min_windows_before_early_stop}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    min_windows_before_early_stop: toNumber(event.target.value, prev.min_windows_before_early_stop),
                   }))
                 }
               />
@@ -1191,7 +1067,7 @@ export function TrainingPage() {
         <section className="panel">
           <h3>Frozen Benchmarks (последние)</h3>
           {frozenSummaryRows.length === 0 ? (
-            <div className="inline-summary">Пока нет frozen suite результатов для текущего job/checkpoint.</div>
+            <div className="inline-summary">Пока нет frozen suite результатов для текущего job.</div>
           ) : (
             <div className="table-scroll">
               <table className="data-table" data-testid="training-frozen-summaries-table">
@@ -1222,43 +1098,6 @@ export function TrainingPage() {
               </table>
             </div>
           )}
-        </section>
-
-        <section className="panel">
-          <h3>Чекпоинты</h3>
-          <div className="table-scroll">
-            <table className="data-table" data-testid="training-checkpoints-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Батчи</th>
-                  <th>Игры</th>
-                  <th>Лучший</th>
-                  <th>Действие</th>
-                </tr>
-              </thead>
-              <tbody>
-                {checkpoints.map((checkpoint) => (
-                  <tr key={checkpoint.checkpoint_id}>
-                    <td>{checkpoint.checkpoint_id}</td>
-                    <td>{checkpoint.batches_done}</td>
-                    <td>{checkpoint.games_played}</td>
-                    <td>{checkpoint.best_score.toFixed(4)}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="mini-btn"
-                        onClick={() => onLoadCheckpoint(checkpoint.checkpoint_id)}
-                        disabled={isBusy || !job || ['Running', 'Pausing', 'Stopping'].includes(job.lifecycle_state)}
-                      >
-                        Загрузить
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
 
         <section className="panel" data-testid="placement-bias-panel">

@@ -125,32 +125,11 @@ async def run_suite_for_checkpoint(
     frozen_benchmarks: FrozenBenchmarkService = Depends(get_frozen_benchmarks),
     training_jobs: TrainingJobService = Depends(get_training_jobs),
 ) -> FrozenSuiteRunResponse:
-    try:
-        job = training_jobs.get_job(payload.job_id)
-        checkpoint_payload = training_jobs.get_checkpoint_payload(payload.job_id, payload.checkpoint_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
-    if not weights:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Checkpoint {payload.checkpoint_id} has no weights payload",
-        )
-    try:
-        run = frozen_benchmarks.run_suite_for_checkpoint(
-            suite_id,
-            checkpoint_id=payload.checkpoint_id,
-            ruleset_id=job.ruleset_id,
-            weights=weights,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _run_to_response(run)
+    _ = suite_id
+    _ = payload
+    _ = frozen_benchmarks
+    _ = training_jobs
+    raise HTTPException(status_code=410, detail="Checkpoint system is disabled")
 
 
 @router.post("/placement-bias/analyze", response_model=PlacementBiasReportResponse)

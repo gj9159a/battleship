@@ -10,8 +10,6 @@ import type {
   PlacementBiasReportDTO,
   RulesetDTO,
   ShotDTO,
-  TrainingCheckpointIndexDTO,
-  TrainingCheckpointDTO,
   TrainingJobDTO,
   TrainingParamsDTO,
 } from './types';
@@ -146,10 +144,6 @@ export function commandTrainingJob(
   });
 }
 
-export function getTrainingCheckpoints(jobId: string): Promise<TrainingCheckpointDTO[]> {
-  return request<TrainingCheckpointDTO[]>(`/api/v1/training/jobs/${jobId}/checkpoints`);
-}
-
 export function getBotVersions(params?: {
   ruleset_id?: string;
   policy_type?: string;
@@ -175,25 +169,6 @@ export function getBotVersions(params?: {
   return request<BotVersionDTO[]>(path);
 }
 
-export function getBotCheckpoints(rulesetId?: string): Promise<TrainingCheckpointIndexDTO[]> {
-  const path = rulesetId ? `/api/v1/bots/checkpoints?ruleset_id=${encodeURIComponent(rulesetId)}` : '/api/v1/bots/checkpoints';
-  return request<TrainingCheckpointIndexDTO[]>(path);
-}
-
-export function createBotFromCheckpoint(payload: {
-  job_id: string;
-  checkpoint_id: string;
-  bot_version_id?: string;
-  policy_type?: string;
-  feature_schema_version?: string;
-  lookahead_policy_version?: string;
-}): Promise<BotVersionDTO> {
-  return request<BotVersionDTO>('/api/v1/bots/from-checkpoint', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
 export function patchBotLabels(
   botVersionId: string,
   payload: { is_baseline?: boolean; is_league?: boolean; is_legacy?: boolean },
@@ -201,12 +176,6 @@ export function patchBotLabels(
   return request<BotVersionDTO>(`/api/v1/bots/${botVersionId}/labels`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
-  });
-}
-
-export function loadTrainingCheckpoint(jobId: string, checkpointId: string): Promise<TrainingJobDTO> {
-  return request<TrainingJobDTO>(`/api/v1/training/jobs/${jobId}/resume-from/${checkpointId}`, {
-    method: 'POST',
   });
 }
 

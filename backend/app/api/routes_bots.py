@@ -50,21 +50,9 @@ async def get_bots_checkpoints(
     ruleset_id: str | None = None,
     training_jobs: TrainingJobService = Depends(get_training_jobs),
 ) -> list[TrainingCheckpointIndexResponse]:
-    rows = training_jobs.list_all_checkpoints(ruleset_id=ruleset_id)
-    response = [
-        TrainingCheckpointIndexResponse(
-            job_id=job.id,
-            checkpoint_id=checkpoint.checkpoint_id,
-            ruleset_id=job.ruleset_id,
-            batches_done=checkpoint.batches_done,
-            games_played=checkpoint.games_played,
-            best_score=checkpoint.best_score,
-            stage_state=checkpoint.stage_state,
-        )
-        for job, checkpoint in rows
-    ]
-    response.sort(key=lambda row: (row.best_score, row.batches_done), reverse=True)
-    return response
+    _ = ruleset_id
+    _ = training_jobs
+    return []
 
 
 @router.post("/from-checkpoint", response_model=BotVersionResponse)
@@ -73,45 +61,10 @@ async def create_bot_from_checkpoint(
     training_jobs: TrainingJobService = Depends(get_training_jobs),
     bot_catalog: BotCatalogService = Depends(get_bot_catalog),
 ) -> BotVersionResponse:
-    try:
-        job = training_jobs.get_job(payload.job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    checkpoints = training_jobs.list_checkpoints(payload.job_id)
-    checkpoint = next((item for item in checkpoints if item.checkpoint_id == payload.checkpoint_id), None)
-    if checkpoint is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown checkpoint_id={payload.checkpoint_id} for job_id={payload.job_id}",
-        )
-
-    bot_version_id = payload.bot_version_id or f"{job.ruleset_id}-{payload.checkpoint_id}"
-    try:
-        checkpoint_payload = training_jobs.get_checkpoint_payload(payload.job_id, payload.checkpoint_id)
-    except (KeyError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
-    if not weights:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Checkpoint {payload.checkpoint_id} has no weights payload",
-        )
-
-    try:
-        created = bot_catalog.create_from_checkpoint(
-            bot_version_id=bot_version_id,
-            ruleset_id=job.ruleset_id,
-            checkpoint=checkpoint,
-            weights=weights,
-            policy_type=payload.policy_type,
-            feature_schema_version=payload.feature_schema_version,
-            lookahead_policy_version=payload.lookahead_policy_version,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    return _to_response(created)
+    _ = payload
+    _ = training_jobs
+    _ = bot_catalog
+    raise HTTPException(status_code=410, detail="Checkpoint system is disabled")
 
 
 @router.get("/{bot_version_id}", response_model=BotVersionResponse)

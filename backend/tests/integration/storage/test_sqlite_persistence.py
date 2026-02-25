@@ -59,13 +59,11 @@ def test_league_persists_ratings_and_matches(tmp_path: Path) -> None:
     assert matrix[0]["total"] == 1
 
 
-def test_training_persists_jobs_and_checkpoints(tmp_path: Path) -> None:
+def test_training_persists_jobs_without_checkpoints(tmp_path: Path) -> None:
     async def _scenario() -> None:
         store = SQLiteStore(tmp_path / "app.sqlite3")
-        checkpoint_root = tmp_path / "checkpoints"
         service = TrainingJobService(
             event_bus=EventBus(),
-            checkpoint_root=checkpoint_root,
             store=store,
         )
         job = service.create_job(
@@ -87,13 +85,12 @@ def test_training_persists_jobs_and_checkpoints(tmp_path: Path) -> None:
         )
         await service.apply_command(job.id, "start")
 
-        checkpoints = []
         for _ in range(300):
-            checkpoints = service.list_checkpoints(job.id)
-            if checkpoints:
+            if service.get_job(job.id).progress.windows_done >= 1:
                 break
             await asyncio.sleep(0.01)
-        assert checkpoints
+        assert service.get_job(job.id).progress.windows_done >= 1
+        assert service.list_checkpoints(job.id) == []
 
         await service.apply_command(job.id, "pause")
         for _ in range(300):
@@ -104,12 +101,11 @@ def test_training_persists_jobs_and_checkpoints(tmp_path: Path) -> None:
 
         restored = TrainingJobService(
             event_bus=EventBus(),
-            checkpoint_root=checkpoint_root,
             store=store,
         )
         restored_job = restored.get_job(job.id)
         assert restored_job.lifecycle_state == "Paused"
-        assert restored.list_checkpoints(job.id)
+        assert restored.list_checkpoints(job.id) == []
 
         await service.apply_command(job.id, "stop")
 

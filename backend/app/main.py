@@ -34,7 +34,7 @@ def _resolve_data_root(data_root: Path | None = None) -> Path:
     return Path.cwd() / ".data"
 
 
-def create_app(*, data_root: Path | None = None) -> FastAPI:
+def create_app(*, data_root: Path | None = None, enable_frozen_benchmarks: bool = True) -> FastAPI:
     app = FastAPI(title="Battleship API", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -53,9 +53,14 @@ def create_app(*, data_root: Path | None = None) -> FastAPI:
     app.state.game_sessions = GameSessionService()
     app.state.bot_catalog = BotCatalogService(store=store)
     app.state.league_service = LeagueService(event_bus=event_bus, store=store, bot_catalog=app.state.bot_catalog)
-    app.state.frozen_benchmarks = FrozenBenchmarkService(store=store, bot_catalog=app.state.bot_catalog)
+    app.state.frozen_benchmarks = (
+        FrozenBenchmarkService(store=store, bot_catalog=app.state.bot_catalog)
+        if enable_frozen_benchmarks
+        else None
+    )
     app.state.placement_diagnostics = PlacementDiagnosticsService()
-    app.state.frozen_benchmarks.ensure_frozen_suites("classic_v1", suite_tier="canonical")
+    if app.state.frozen_benchmarks is not None:
+        app.state.frozen_benchmarks.ensure_frozen_suites("classic_v1", suite_tier="canonical")
     app.state.training_jobs = TrainingJobService(
         event_bus=event_bus,
         checkpoint_root=resolved_data_root / "training_checkpoints",

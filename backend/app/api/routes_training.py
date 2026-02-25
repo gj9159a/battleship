@@ -159,21 +159,10 @@ async def get_training_checkpoints(
     training_jobs: TrainingJobService = Depends(get_training_jobs),
 ) -> list[TrainingCheckpointResponse]:
     try:
-        checkpoints = training_jobs.list_checkpoints(job_id)
+        training_jobs.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return [
-        TrainingCheckpointResponse(
-            checkpoint_id=checkpoint.checkpoint_id,
-            job_id=checkpoint.job_id,
-            path=checkpoint.path,
-            batches_done=checkpoint.batches_done,
-            games_played=checkpoint.games_played,
-            best_score=checkpoint.best_score,
-            stage_state=checkpoint.stage_state,
-        )
-        for checkpoint in checkpoints
-    ]
+    return []
 
 
 @router.post("/{job_id}/resume-from/{checkpoint_id}", response_model=TrainingJobResponse)
@@ -183,12 +172,10 @@ async def load_training_checkpoint(
     training_jobs: TrainingJobService = Depends(get_training_jobs),
 ) -> TrainingJobResponse:
     try:
-        job = await training_jobs.load_checkpoint(job_id, checkpoint_id)
+        training_jobs.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _to_response(job)
+    raise HTTPException(status_code=410, detail="Checkpoint system is disabled")
 
 
 @router.post("/{job_id}/commands", response_model=TrainingJobResponse)

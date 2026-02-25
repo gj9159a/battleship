@@ -15,7 +15,7 @@ from app.services.events import EventBus
 from app.services.frozen_benchmarks import FrozenBenchmarkService
 from app.services.league import LeagueService
 from app.storage import SQLiteStore
-from app.trainer import CheckpointStore, TrainingCheckpoint, TrainingParams, TrainingProgress
+from app.trainer import TrainingParams, TrainingProgress
 from app.trainer.models import LifecycleState, StageState
 from app.trainer.simulation import (
     ATTACK_EFFICIENCY_WEIGHTS,
@@ -68,15 +68,12 @@ class TrainingJobService:
     ) -> None:
         self._jobs: dict[str, TrainingJob] = {}
         self._event_bus = event_bus
-        self._checkpoints: dict[str, list[TrainingCheckpoint]] = {}
         self._runtimes: dict[str, _TrainingRuntime] = {}
         self._bot_catalog = bot_catalog
         self._league_service = league_service
         self._frozen_benchmarks = frozen_benchmarks
         self._store = store
         self._lock = threading.RLock()
-        root = checkpoint_root or (Path.cwd() / ".data" / "training_checkpoints")
-        self._checkpoint_store = CheckpointStore(root)
         self._restore_from_store()
 
     def _restore_from_store(self) -> None:
@@ -176,7 +173,6 @@ class TrainingJobService:
                     job.progress.current_population_size = job.params.population_size
                 job.params.population_size = job.progress.current_population_size
                 self._jobs[job.id] = job
-                self._checkpoints[job.id] = []
                 self._runtimes[job.id] = _TrainingRuntime(
                     simulator=SelfPlaySimulator(
                         ruleset_id=job.ruleset_id,
@@ -193,47 +189,6 @@ class TrainingJobService:
                 )
                 if not job.progress.eval_protocol_hash:
                     job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
-                self._persist_job_locked(job)
-
-            for checkpoint in self._store.load_training_checkpoints():
-                if checkpoint.job_id in self._jobs:
-                    self._checkpoints.setdefault(checkpoint.job_id, []).append(checkpoint)
-
-            for checkpoint_list in self._checkpoints.values():
-                checkpoint_list.sort(key=lambda item: item.batches_done)
-
-            for job_id, checkpoint_list in self._checkpoints.items():
-                if not checkpoint_list:
-                    continue
-                job = self._jobs[job_id]
-                runtime = self._runtimes[job_id]
-                latest = checkpoint_list[-1]
-                has_full_search_state = False
-                search_state_payload: dict | None = None
-                try:
-                    payload = self._checkpoint_store.load(latest)
-                    search_state_payload = payload.get("search_state")
-                    has_full_search_state = SelfPlaySimulator.has_full_search_state(search_state_payload)
-                except FileNotFoundError:
-                    has_full_search_state = False
-                    search_state_payload = None
-                if runtime.simulator is not None:
-                    runtime.simulator.close()
-                runtime.simulator = SelfPlaySimulator(
-                    ruleset_id=job.ruleset_id,
-                    seed=job.seed + job.progress.windows_done,
-                    window_games=job.params.microbatch_size * job.params.eval_window_batches,
-                    population_size=job.progress.current_population_size,
-                    train_split=job.params.train_split,
-                    worker_count=job.params.worker_count,
-                    seed_weights=job.current_weights,
-                    seed_best_weights=job.best_weights,
-                    seed_best_score=job.progress.best_score,
-                    search_state=search_state_payload if has_full_search_state else None,
-                )
-                job.progress.search_state_bootstrapped = not has_full_search_state
-                self._sync_search_progress_from_state(job, runtime.simulator.search_observability())
-                job.progress.current_population_size = runtime.simulator.population_size
                 self._persist_job_locked(job)
 
     def _persist_job_locked(self, job: TrainingJob) -> None:
@@ -364,7 +319,6 @@ class TrainingJobService:
         job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
         with self._lock:
             self._jobs[job.id] = job
-            self._checkpoints[job.id] = []
             self._runtimes[job.id] = _TrainingRuntime(
                 simulator=SelfPlaySimulator(
                     ruleset_id=ruleset_id,
@@ -388,98 +342,20 @@ class TrainingJobService:
             except KeyError as exc:
                 raise KeyError(f"Unknown training job id={job_id}") from exc
 
-    def list_checkpoints(self, job_id: str) -> list[TrainingCheckpoint]:
+    def list_checkpoints(self, job_id: str) -> list[dict]:
         with self._lock:
             if job_id not in self._jobs:
                 raise KeyError(f"Unknown training job id={job_id}")
-            return list(self._checkpoints.get(job_id, []))
+            return []
 
-    def list_all_checkpoints(self, ruleset_id: str | None = None) -> list[tuple[TrainingJob, TrainingCheckpoint]]:
-        with self._lock:
-            rows: list[tuple[TrainingJob, TrainingCheckpoint]] = []
-            for job_id, job in self._jobs.items():
-                if ruleset_id is not None and job.ruleset_id != ruleset_id:
-                    continue
-                for checkpoint in self._checkpoints.get(job_id, []):
-                    rows.append((job, checkpoint))
-            return rows
+    def list_all_checkpoints(self, ruleset_id: str | None = None) -> list[tuple[TrainingJob, dict]]:
+        return []
 
     def get_checkpoint_payload(self, job_id: str, checkpoint_id: str) -> dict:
-        with self._lock:
-            if job_id not in self._jobs:
-                raise KeyError(f"Unknown training job id={job_id}")
-            checkpoint = self._get_checkpoint_locked(job_id, checkpoint_id)
-            return self._checkpoint_store.load(checkpoint)
+        raise KeyError("Checkpoint system is disabled")
 
     async def load_checkpoint(self, job_id: str, checkpoint_id: str) -> TrainingJob:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                raise KeyError(f"Unknown training job id={job_id}")
-            if job.lifecycle_state in {"Running", "Pausing", "Stopping"}:
-                raise ValueError("Cannot load checkpoint while job is active")
-
-            checkpoint = self._get_checkpoint_locked(job_id, checkpoint_id)
-            payload = self._checkpoint_store.load(checkpoint)
-
-            job.progress.batches_done = int(payload["batches_done"])
-            job.progress.games_played = int(payload["games_played"])
-            job.progress.best_score = float(payload["best_score"])
-            job.progress.last_score = float(payload["best_score"])
-            job.progress.windows_done = job.progress.batches_done // job.params.eval_window_batches
-            job.progress.plateau_windows = 0
-            job.progress.candidate_streak = 0
-            stage_state = payload.get("stage_state")
-            job.stage_state = stage_state if stage_state else None
-            job.current_weights = normalize_weights(payload.get("current_weights"))
-            job.best_weights = normalize_weights(payload.get("best_weights"))
-            search_state_payload = payload.get("search_state")
-            has_full_search_state = SelfPlaySimulator.has_full_search_state(search_state_payload)
-            if job.progress.current_population_size <= 0:
-                job.progress.current_population_size = job.params.population_size
-            job.params.population_size = job.progress.current_population_size
-
-            runtime = self._runtimes[job.id]
-            if runtime.simulator is not None:
-                runtime.simulator.close()
-            runtime.simulator = SelfPlaySimulator(
-                ruleset_id=job.ruleset_id,
-                seed=job.seed + job.progress.windows_done,
-                window_games=job.params.microbatch_size * job.params.eval_window_batches,
-                population_size=job.progress.current_population_size,
-                train_split=job.params.train_split,
-                worker_count=job.params.worker_count,
-                seed_weights=job.current_weights,
-                seed_best_weights=job.best_weights,
-                seed_best_score=job.progress.best_score,
-                search_state=search_state_payload if has_full_search_state else None,
-            )
-            job.progress.search_state_bootstrapped = not has_full_search_state
-            self._sync_search_progress_from_state(job, runtime.simulator.search_observability())
-            job.progress.current_population_size = runtime.simulator.population_size
-            self._persist_job_locked(job)
-
-        if not has_full_search_state:
-            self._event_bus.publish_sync(
-                event_type="training.search_state_bootstrapped",
-                entity_id=job_id,
-                ruleset_id=job.ruleset_id,
-                payload={
-                    "checkpoint_id": checkpoint_id,
-                    "reason": "missing_or_incomplete_search_state",
-                },
-            )
-        self._event_bus.publish_sync(
-            event_type="training.checkpoint_loaded",
-            entity_id=job_id,
-            ruleset_id=job.ruleset_id,
-            payload={
-                "checkpoint_id": checkpoint_id,
-                "batches_done": job.progress.batches_done,
-                "search_state_bootstrapped": job.progress.search_state_bootstrapped,
-            },
-        )
-        return job
+        raise ValueError("Checkpoint system is disabled")
 
     async def apply_command(self, job_id: str, command: str) -> TrainingJob:
         with self._lock:
@@ -677,7 +553,6 @@ class TrainingJobService:
     def _run_microbatch_locked(self, job: TrainingJob, runtime: _TrainingRuntime) -> None:
         job.progress.batches_done += 1
         job.progress.games_played += job.params.microbatch_size
-        checkpoint_due = (job.progress.batches_done % job.params.checkpoint_interval_batches) == 0
         wr_baseline: float | None = None
         wr_active: float | None = None
         avg_turns_win: float | None = None
@@ -995,54 +870,8 @@ class TrainingJobService:
             window_evaluated=wr_baseline is not None,
         )
 
-        checkpoint_due = needs_window_eval and (checkpoint_due or plateau_triggered)
-        if checkpoint_due:
-            search_state_snapshot = runtime.simulator.export_search_state() if runtime.simulator is not None else {}
-            checkpoint = self._checkpoint_store.save(
-                job_id=job.id,
-                batches_done=job.progress.batches_done,
-                games_played=job.progress.games_played,
-                best_score=job.progress.best_score,
-                stage_state=job.stage_state,
-                current_weights=job.current_weights,
-                best_weights=job.best_weights,
-                search_state=search_state_snapshot,
-            )
-            self._checkpoints[job.id].append(checkpoint)
-            if self._store is not None:
-                self._store.upsert_training_checkpoint(checkpoint)
-            if plateau_triggered:
-                self._maybe_auto_promote_checkpoint_locked(job, runtime, checkpoint, force=True)
-            if self._frozen_benchmarks is not None:
-                checkpoint_payload = self._checkpoint_store.load(checkpoint)
-                checkpoint_weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
-                if checkpoint_weights:
-                    suite_summaries = self._frozen_benchmarks.run_default_suites_for_checkpoint(
-                        ruleset_id=job.ruleset_id,
-                        checkpoint_id=checkpoint.checkpoint_id,
-                        weights=normalize_weights(checkpoint_weights),
-                    )
-                    if suite_summaries:
-                        job.progress.frozen_suite_summaries = suite_summaries
-                        self._event_bus.publish_sync(
-                            event_type="training.frozen_suites_updated",
-                            entity_id=job.id,
-                            ruleset_id=job.ruleset_id,
-                            payload={
-                                "checkpoint_id": checkpoint.checkpoint_id,
-                                "suite_summaries": suite_summaries,
-                            },
-                        )
-            self._event_bus.publish_sync(
-                event_type="training.checkpoint_created",
-                entity_id=job.id,
-                ruleset_id=job.ruleset_id,
-                payload={
-                    "checkpoint_id": checkpoint.checkpoint_id,
-                    "batches_done": checkpoint.batches_done,
-                    "path": checkpoint.path,
-                },
-            )
+        if needs_window_eval and plateau_triggered:
+            self._maybe_auto_promote_weights_locked(job, runtime, dict(job.best_weights), force=True)
         self._persist_job_locked(job)
 
     @staticmethod
@@ -1318,11 +1147,11 @@ class TrainingJobService:
             opponents.append(dict(bot.weights))
         return opponents
 
-    def _maybe_auto_promote_checkpoint_locked(
+    def _maybe_auto_promote_weights_locked(
         self,
         job: TrainingJob,
         runtime: _TrainingRuntime,
-        checkpoint: TrainingCheckpoint,
+        weights: dict[str, float],
         *,
         force: bool = False,
     ) -> None:
@@ -1332,9 +1161,6 @@ class TrainingJobService:
         if not force and (job.progress.windows_done - runtime.last_auto_promote_window) < self._PROMOTE_EVERY_WINDOWS:
             return
         runtime.last_auto_promote_window = job.progress.windows_done
-
-        checkpoint_payload = self._checkpoint_store.load(checkpoint)
-        weights = checkpoint_payload.get("best_weights") or checkpoint_payload.get("current_weights") or {}
         if not weights:
             return
 
@@ -1344,13 +1170,13 @@ class TrainingJobService:
             protocol_hash_before = job.progress.eval_protocol_hash
 
         before_signature = self._top16_signature_locked(job.ruleset_id)
-        # Non-blocking promotion: all checkpoint candidates enter league ecosystem.
-        bot_version_id = f"{job.id[:8]}-b{checkpoint.batches_done}"
+        # Non-blocking promotion: all plateau candidates enter league ecosystem.
+        bot_version_id = f"{job.id[:8]}-w{job.progress.windows_done}"
         try:
             bot = self._bot_catalog.create_from_checkpoint(
                 bot_version_id=bot_version_id,
                 ruleset_id=job.ruleset_id,
-                checkpoint=checkpoint,
+                checkpoint=None,
                 weights=weights,
                 policy_type="probability_strong",
                 feature_schema_version="classic_features_v1",
@@ -1366,7 +1192,7 @@ class TrainingJobService:
             entity_id=job.id,
             ruleset_id=job.ruleset_id,
             payload={
-                "checkpoint_id": checkpoint.checkpoint_id,
+                "checkpoint_id": None,
                 "bot_version_id": bot.bot_version_id,
                 "bypassed": True,
                 "eval_protocol_hash": protocol_hash_before,
@@ -1556,12 +1382,6 @@ class TrainingJobService:
             return True
 
         return False
-
-    def _get_checkpoint_locked(self, job_id: str, checkpoint_id: str) -> TrainingCheckpoint:
-        for checkpoint in self._checkpoints.get(job_id, []):
-            if checkpoint.checkpoint_id == checkpoint_id:
-                return checkpoint
-        raise KeyError(f"Unknown checkpoint_id={checkpoint_id} for job_id={job_id}")
 
     def _ensure_state(self, job: TrainingJob, allowed: set[str], command: str) -> None:
         if job.lifecycle_state not in allowed:

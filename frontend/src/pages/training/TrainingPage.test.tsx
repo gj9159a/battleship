@@ -98,10 +98,6 @@ describe('TrainingPage', () => {
         return new Response(JSON.stringify(JOB_RUNNING), { status: 200 });
       }
 
-      if (url.endsWith('/api/v1/training/jobs/job-1/checkpoints') && method === 'GET') {
-        return new Response(JSON.stringify([]), { status: 200 });
-      }
-
       if (url.endsWith('/api/v1/training/jobs/job-1') && method === 'GET') {
         return new Response(JSON.stringify(JOB_RUNNING), { status: 200 });
       }

@@ -92,7 +92,7 @@ class BotCatalogService:
         *,
         bot_version_id: str,
         ruleset_id: str,
-        checkpoint: TrainingCheckpoint,
+        checkpoint: TrainingCheckpoint | None,
         weights: dict[str, float],
         policy_type: str,
         feature_schema_version: str,
@@ -111,8 +111,8 @@ class BotCatalogService:
                 feature_schema_version=feature_schema_version,
                 lookahead_policy_version=lookahead_policy_version,
                 weights=normalize_weights(weights),
-                source_job_id=checkpoint.job_id,
-                source_checkpoint_id=checkpoint.checkpoint_id,
+                source_job_id=checkpoint.job_id if checkpoint is not None else None,
+                source_checkpoint_id=checkpoint.checkpoint_id if checkpoint is not None else None,
                 tags=set(),
             )
             self._bots[created.bot_version_id] = created
