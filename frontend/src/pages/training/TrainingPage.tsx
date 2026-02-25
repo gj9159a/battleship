@@ -87,7 +87,8 @@ type FrozenSummaryRow = {
 };
 
 function toNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
+  const normalized = value.replace(',', '.');
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -861,9 +862,13 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Порог улучшения
+              Порог улучшения (доля 0..1)
               <input
                 aria-label="Порог улучшения"
+                type="number"
+                step="0.0001"
+                min="0"
+                max="1"
                 value={params.improvement_delta}
                 onChange={(event) =>
                   setParams((prev) => ({
@@ -875,9 +880,13 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Порог плато
+              Порог плато (доля 0..1)
               <input
                 aria-label="Порог плато"
+                type="number"
+                step="0.0001"
+                min="0"
+                max="1"
                 value={params.plateau_delta}
                 onChange={(event) =>
                   setParams((prev) => ({ ...prev, plateau_delta: toNumber(event.target.value, prev.plateau_delta) }))
@@ -886,7 +895,7 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Терпение плато (окон)
+              Терпение плато (эпох)
               <input
                 aria-label="Терпение плато"
                 value={params.plateau_patience_windows}

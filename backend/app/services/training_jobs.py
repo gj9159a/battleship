@@ -56,7 +56,7 @@ class TrainingJobService:
     _TOP_K_OPPONENTS = 16
     _PROMOTE_EVERY_WINDOWS = 4
     _PLATEAU_POPULATION_STEP = 8
-    _PROMOTION_MATCHES_PER_OPPONENT = 2
+    _PROMOTION_MATCHES_PER_OPPONENT = 6
 
     def __init__(
         self,
@@ -825,7 +825,19 @@ class TrainingJobService:
             job.best_weights = runtime.simulator.best_weights
 
             self._apply_stage_transitions_locked(job)
-            plateau_triggered = self._handle_plateau_autoevolve_locked(job, runtime)
+            plateau_triggered = False
+            plateau_ready = (
+                job.params.autoevolve_enabled
+                and job.progress.plateau_windows >= max(1, int(job.params.plateau_patience_windows))
+            )
+            if plateau_ready:
+                promoted_to_top16 = self._maybe_auto_promote_weights_locked(
+                    job, runtime, dict(job.best_weights), force=True
+                )
+                if promoted_to_top16:
+                    job.progress.plateau_windows = 0
+                else:
+                    plateau_triggered = self._handle_plateau_autoevolve_locked(job, runtime)
         else:
             plateau_triggered = False
 
@@ -876,8 +888,6 @@ class TrainingJobService:
             window_evaluated=wr_baseline is not None,
         )
 
-        if needs_window_eval and plateau_triggered:
-            self._maybe_auto_promote_weights_locked(job, runtime, dict(job.best_weights), force=True)
         self._persist_job_locked(job)
 
     @staticmethod
@@ -1160,15 +1170,15 @@ class TrainingJobService:
         weights: dict[str, float],
         *,
         force: bool = False,
-    ) -> None:
+    ) -> bool:
         if self._bot_catalog is None or self._league_service is None:
-            return
+            return False
 
         if not force and (job.progress.windows_done - runtime.last_auto_promote_window) < self._PROMOTE_EVERY_WINDOWS:
-            return
+            return False
         runtime.last_auto_promote_window = job.progress.windows_done
         if not weights:
-            return
+            return False
 
         protocol_hash_before = job.progress.eval_protocol_hash
         if not protocol_hash_before:
@@ -1190,7 +1200,7 @@ class TrainingJobService:
                 tags={"active", f"eval_protocol:{protocol_hash_before}"},
             )
         except ValueError:
-            return
+            return False
 
         runtime.last_auto_promote_window = job.progress.windows_done
         self._league_service.register_bot(job.ruleset_id, bot.bot_version_id, "active")
@@ -1223,6 +1233,17 @@ class TrainingJobService:
             },
         )
         self._maybe_rebench_league_mismatch_locked(job)
+        return self._is_bot_in_league_top16_locked(job.ruleset_id, bot.bot_version_id)
+
+    def _is_bot_in_league_top16_locked(self, ruleset_id: str, bot_version_id: str) -> bool:
+        if self._league_service is None:
+            return False
+        try:
+            table = self._league_service.list_table(ruleset_id)
+        except KeyError:
+            return False
+        top16 = [row.bot_version_id for row in table if row.pool_type == "league"][:16]
+        return bot_version_id in top16
 
     def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
         if self._bot_catalog is None or self._league_service is None:
