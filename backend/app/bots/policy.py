@@ -18,7 +18,6 @@ class StrongBotConfig:
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     "hunt_heat": 1.0,
-    "hunt_parity": 0.24,
     "hunt_center": 0.16,
     "target_adjacent": 1.05,
     "target_line": 0.48,
@@ -163,14 +162,9 @@ class StrongBotPolicy:
         center = (self._size - 1) / 2
         dist_center = abs(row - center) + abs(col - center)
         center_score = 1.0 - (dist_center / max(1.0, self._size - 1))
-        parity = 1.0 if (row + col) % 2 == 0 else 0.0
 
         if not target_mode:
-            return (
-                self._weights["hunt_heat"] * heat.get(cell, 0.0)
-                + self._weights["hunt_parity"] * parity
-                + self._weights["hunt_center"] * center_score
-            )
+            return self._weights["hunt_heat"] * heat.get(cell, 0.0) + self._weights["hunt_center"] * center_score
 
         adjacent_hits = sum(1 for n in self._orthogonal_neighbors(cell) if n in self._hits_pending)
         line_bonus = self._line_bonus(cell)

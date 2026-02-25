@@ -165,6 +165,15 @@ class SQLiteStore:
 
                 CREATE INDEX IF NOT EXISTS idx_frozen_suite_runs_suite_created
                     ON frozen_suite_runs (suite_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS search_weight_bounds (
+                    ruleset_id TEXT NOT NULL,
+                    param_name TEXT NOT NULL,
+                    lower_bound REAL NOT NULL,
+                    upper_bound REAL NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ruleset_id, param_name)
+                );
                 """
             )
             self._ensure_frozen_suite_tier_column(conn)
@@ -720,3 +729,36 @@ class SQLiteStore:
                     self._dumps(run.raw_metrics),
                 ),
             )
+
+    def load_search_weight_bounds(self, ruleset_id: str) -> dict[str, tuple[float, float]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT param_name, lower_bound, upper_bound
+                FROM search_weight_bounds
+                WHERE ruleset_id = ?
+                """,
+                (ruleset_id,),
+            ).fetchall()
+        return {
+            str(row["param_name"]): (float(row["lower_bound"]), float(row["upper_bound"]))
+            for row in rows
+        }
+
+    def upsert_search_weight_bounds(self, ruleset_id: str, bounds: dict[str, tuple[float, float]]) -> None:
+        with self._lock, self._connect() as conn:
+            for param_name, pair in bounds.items():
+                lower_bound = float(pair[0])
+                upper_bound = float(pair[1])
+                conn.execute(
+                    """
+                    INSERT INTO search_weight_bounds (
+                        ruleset_id, param_name, lower_bound, upper_bound
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(ruleset_id, param_name) DO UPDATE SET
+                        lower_bound=excluded.lower_bound,
+                        upper_bound=excluded.upper_bound,
+                        updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (ruleset_id, param_name, lower_bound, upper_bound),
+                )

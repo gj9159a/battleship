@@ -58,6 +58,26 @@ describe('LeaguePage', () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
 
+      if (url.includes('/api/v1/bots') && method === 'GET') {
+        const rows = registered
+          ? [
+              {
+                bot_version_id: 'candidate-001',
+                ruleset_id: 'classic_v1',
+                policy_type: 'probability_strong',
+                feature_schema_version: 'classic_features_v1',
+                lookahead_policy_version: 'adaptive_v1',
+                weights: { hunt_heat: 1.0, hunt_center: 0.2, target_adjacent: 1.1, target_line: 0.6, target_heat: 0.5, lookahead_hit: 0.7, lookahead_depth2: 0.4 },
+                source_job_id: null,
+                source_checkpoint_id: null,
+                tags: ['league'],
+                created_at: '2026-02-24T00:00:00Z',
+              },
+            ]
+          : [];
+        return new Response(JSON.stringify(rows), { status: 200 });
+      }
+
       if (url.endsWith('/api/v1/league/classic_v1/bots') && method === 'POST') {
         registered = true;
         return new Response(

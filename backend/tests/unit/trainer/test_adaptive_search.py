@@ -4,7 +4,7 @@ from app.bots.selfplay import SelfPlaySimulator
 
 def _clip_expected(key: str, value: float) -> float:
     del key
-    return round(max(0.0, min(3.0, value)), 6)
+    return round(max(0.0, min(2.0, value)), 6)
 
 
 def test_cma_sampling_uses_mean_sigma_and_diag() -> None:
@@ -29,13 +29,13 @@ def test_cma_sampling_uses_mean_sigma_and_diag() -> None:
     simulator._cma_diag["hunt_heat"] = 4.0
 
     heat_deltas: list[float] = []
-    parity_deltas: list[float] = []
+    center_deltas: list[float] = []
     for _ in range(400):
         mutated = simulator._sample_challenger()
         heat_deltas.append(abs(mutated["hunt_heat"] - base["hunt_heat"]))
-        parity_deltas.append(abs(mutated["hunt_parity"] - base["hunt_parity"]))
+        center_deltas.append(abs(mutated["hunt_center"] - base["hunt_center"]))
 
-    assert (sum(heat_deltas) / len(heat_deltas)) > (sum(parity_deltas) / len(parity_deltas)) * 3.0
+    assert (sum(heat_deltas) / len(heat_deltas)) > (sum(center_deltas) / len(center_deltas)) * 3.0
 
 
 def test_cma_update_is_deterministic_for_fixed_candidates() -> None:

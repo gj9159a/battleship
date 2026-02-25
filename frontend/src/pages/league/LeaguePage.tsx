@@ -7,6 +7,7 @@ import {
   getLeagueMatchupMatrix,
   getLeagueSeason,
   getLeagueTable,
+  getBotVersions,
   getRulesets,
   recordLeagueMatch,
   registerLeagueBot,
@@ -31,6 +32,7 @@ export function LeaguePage() {
 
   const [table, setTable] = useState<LeagueRatingDTO[]>([]);
   const [matrix, setMatrix] = useState<LeagueMatrixCellDTO[]>([]);
+  const [botWeightsById, setBotWeightsById] = useState<Record<string, Record<string, number>>>({});
   const [season, setSeason] = useState<LeagueSeasonDTO | null>(null);
 
   const [botVersionId, setBotVersionId] = useState('');
@@ -70,9 +72,29 @@ export function LeaguePage() {
   }, [selectedRulesetId]);
 
   async function refreshLeagueData(rulesetId: string): Promise<void> {
-    const [rows, cells] = await Promise.all([getLeagueTable(rulesetId), getLeagueMatchupMatrix(rulesetId)]);
+    const [rows, cells, bots] = await Promise.all([
+      getLeagueTable(rulesetId),
+      getLeagueMatchupMatrix(rulesetId),
+      getBotVersions({ ruleset_id: rulesetId }),
+    ]);
     setTable(rows);
     setMatrix(cells);
+    const mapped: Record<string, Record<string, number>> = {};
+    for (const bot of bots) {
+      mapped[bot.bot_version_id] = bot.weights;
+    }
+    setBotWeightsById(mapped);
+  }
+
+  function botWeightsTooltip(botVersionId: string): string {
+    const weights = botWeightsById[botVersionId];
+    if (!weights) {
+      return 'Веса недоступны';
+    }
+    return Object.entries(weights)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${key}=${value.toFixed(3)}`)
+      .join('\n');
   }
 
   useEffect(() => {
@@ -353,7 +375,7 @@ export function LeaguePage() {
             <tbody>
               {top16.map((row) => (
                 <tr key={row.bot_version_id}>
-                  <td>{row.bot_version_id}</td>
+                  <td title={botWeightsTooltip(row.bot_version_id)}>{row.bot_version_id}</td>
                   <td>{row.pool_type}</td>
                   <td>{row.mu.toFixed(3)}</td>
                   <td>{row.sigma.toFixed(3)}</td>

@@ -44,6 +44,14 @@ class _PromotionAttemptResult:
     rank: int
 
 
+@dataclass(frozen=True, slots=True)
+class _PromotionCandidate:
+    fingerprint: str
+    weights: dict[str, float]
+    score: float
+    window: int
+
+
 def _run_strong_match_task(task: _StrongMatchTask) -> int:
     ruleset = get_ruleset(task.ruleset_id)
     rng = random.Random(task.seed)
@@ -82,6 +90,8 @@ class _TrainingRuntime:
     stop_requested: bool = False
     simulator: SelfPlaySimulator | None = None
     last_auto_promote_window: int = 0
+    last_league_members_signature: str = ""
+    promotion_candidates: list[_PromotionCandidate] = field(default_factory=list)
 
 
 class TrainingJobService:
@@ -89,6 +99,13 @@ class TrainingJobService:
     _PROMOTE_EVERY_WINDOWS = 4
     _PLATEAU_POPULATION_STEP = 8
     _PROMOTION_MATCHES_PER_OPPONENT = 6
+    _SEARCH_BOUND_DEFAULT_LOW = 0.0
+    _SEARCH_BOUND_DEFAULT_HIGH = 2.0
+    _SEARCH_BOUND_NEAR_RATIO = 0.8
+    _SEARCH_BOUND_BOT_RATIO = 0.8
+    _SEARCH_BOUND_STEP = 0.5
+    _SEARCH_BOUND_MIN_LEAGUE_SIZE = 16
+    _MIN_PROMOTION_BUFFER_SIZE = 2
 
     def __init__(
         self,
@@ -107,6 +124,7 @@ class TrainingJobService:
         self._frozen_benchmarks = frozen_benchmarks
         self._store = store
         self._lock = threading.RLock()
+        self._search_bounds_by_ruleset: dict[str, dict[str, tuple[float, float]]] = {}
         self._restore_from_store()
 
     def _restore_from_store(self) -> None:
@@ -211,6 +229,9 @@ class TrainingJobService:
                 if job.progress.current_population_size <= 0:
                     job.progress.current_population_size = job.params.population_size
                 job.params.population_size = job.progress.current_population_size
+                bounds = self._search_bounds_locked(job.ruleset_id)
+                job.current_weights = self._clamp_weights_to_bounds(job.current_weights, bounds)
+                job.best_weights = self._clamp_weights_to_bounds(job.best_weights, bounds)
                 self._jobs[job.id] = job
                 self._runtimes[job.id] = _TrainingRuntime(
                     simulator=SelfPlaySimulator(
@@ -223,8 +244,18 @@ class TrainingJobService:
                         seed_weights=job.current_weights,
                         seed_best_weights=job.best_weights,
                         seed_best_score=job.progress.best_score,
+                        weight_bounds=bounds,
                     ),
                     last_auto_promote_window=job.progress.windows_done,
+                    last_league_members_signature=self._league_members_signature_locked(job.ruleset_id),
+                    promotion_candidates=[
+                        _PromotionCandidate(
+                            fingerprint=self._weights_fingerprint(job.current_weights),
+                            weights=dict(job.current_weights),
+                            score=float(job.progress.last_score),
+                            window=int(job.progress.windows_done),
+                        )
+                    ],
                 )
                 if not job.progress.eval_protocol_hash:
                     job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
@@ -333,6 +364,209 @@ class TrainingJobService:
             }
         )
 
+    def _default_search_bounds(self) -> dict[str, tuple[float, float]]:
+        keys = normalize_weights(None).keys()
+        return {
+            key: (self._SEARCH_BOUND_DEFAULT_LOW, self._SEARCH_BOUND_DEFAULT_HIGH)
+            for key in keys
+        }
+
+    def _search_bounds_locked(self, ruleset_id: str) -> dict[str, tuple[float, float]]:
+        cached = self._search_bounds_by_ruleset.get(ruleset_id)
+        if cached is not None:
+            return dict(cached)
+
+        bounds = self._default_search_bounds()
+        if self._store is not None:
+            loaded = self._store.load_search_weight_bounds(ruleset_id)
+            for key, pair in loaded.items():
+                if key not in bounds:
+                    continue
+                low = float(pair[0])
+                high = float(pair[1])
+                if high < low:
+                    low, high = high, low
+                bounds[key] = (low, high)
+        self._search_bounds_by_ruleset[ruleset_id] = dict(bounds)
+        return bounds
+
+    @staticmethod
+    def _clamp_weight_value(value: float, low: float, high: float) -> float:
+        return max(low, min(high, value))
+
+    def _clamp_weights_to_bounds(
+        self,
+        weights: dict[str, float],
+        bounds: dict[str, tuple[float, float]],
+    ) -> dict[str, float]:
+        normalized = normalize_weights(weights)
+        clamped: dict[str, float] = {}
+        for key, value in normalized.items():
+            low, high = bounds.get(key, (self._SEARCH_BOUND_DEFAULT_LOW, self._SEARCH_BOUND_DEFAULT_HIGH))
+            clamped[key] = round(self._clamp_weight_value(float(value), low, high), 6)
+        return clamped
+
+    @staticmethod
+    def _weights_fingerprint(weights: dict[str, float]) -> str:
+        normalized = normalize_weights(weights)
+        serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+    def _promotion_buffer_size(self, job: TrainingJob) -> int:
+        return max(
+            self._MIN_PROMOTION_BUFFER_SIZE,
+            int(job.params.plateau_patience_windows) + 1,
+        )
+
+    def _record_promotion_candidate_locked(
+        self,
+        job: TrainingJob,
+        runtime: _TrainingRuntime,
+        *,
+        weights: dict[str, float],
+        score: float,
+        window: int,
+    ) -> None:
+        fingerprint = self._weights_fingerprint(weights)
+        normalized = normalize_weights(weights)
+        runtime.promotion_candidates = [
+            candidate
+            for candidate in runtime.promotion_candidates
+            if candidate.fingerprint != fingerprint
+        ]
+        runtime.promotion_candidates.append(
+            _PromotionCandidate(
+                fingerprint=fingerprint,
+                weights=normalized,
+                score=float(score),
+                window=int(window),
+            )
+        )
+        runtime.promotion_candidates.sort(
+            key=lambda candidate: (-candidate.score, -candidate.window, candidate.fingerprint),
+        )
+        limit = self._promotion_buffer_size(job)
+        runtime.promotion_candidates = runtime.promotion_candidates[:limit]
+
+    def _select_promotion_candidate_locked(
+        self,
+        job: TrainingJob,
+        runtime: _TrainingRuntime,
+    ) -> dict[str, float]:
+        if not runtime.promotion_candidates:
+            return dict(job.best_weights)
+        slot = min(job.progress.meta_plateau_counter, len(runtime.promotion_candidates) - 1)
+        return dict(runtime.promotion_candidates[slot].weights)
+
+    def _find_existing_bot_id_by_fingerprint_locked(
+        self,
+        *,
+        ruleset_id: str,
+        fingerprint: str,
+    ) -> str | None:
+        if self._bot_catalog is None:
+            return None
+        for bot in self._bot_catalog.list_bots(ruleset_id=ruleset_id, policy_type="probability_strong"):
+            if self._weights_fingerprint(bot.weights) == fingerprint:
+                return bot.bot_version_id
+        return None
+
+    def _league_members_signature_locked(self, ruleset_id: str) -> str:
+        if self._league_service is None:
+            return ""
+        try:
+            table = self._league_service.list_table(ruleset_id)
+        except KeyError:
+            return ""
+        ids = [row.bot_version_id for row in table if row.pool_type == "league"][: self._SEARCH_BOUND_MIN_LEAGUE_SIZE]
+        if len(ids) < self._SEARCH_BOUND_MIN_LEAGUE_SIZE:
+            return ""
+        serialized = json.dumps(ids, sort_keys=False, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+    def _maybe_expand_search_bounds_from_league_locked(self, ruleset_id: str) -> bool:
+        if self._league_service is None or self._bot_catalog is None:
+            return False
+        try:
+            table = self._league_service.list_table(ruleset_id)
+        except KeyError:
+            return False
+
+        league_rows = [row for row in table if row.pool_type == "league"][: self._SEARCH_BOUND_MIN_LEAGUE_SIZE]
+        if len(league_rows) < self._SEARCH_BOUND_MIN_LEAGUE_SIZE:
+            return False
+
+        bots = []
+        for row in league_rows:
+            try:
+                bots.append(self._bot_catalog.get_bot(row.bot_version_id))
+            except KeyError:
+                return False
+
+        bounds = self._search_bounds_locked(ruleset_id)
+        normalized_bots = [normalize_weights(bot.weights) for bot in bots]
+        changed = False
+        for key, pair in list(bounds.items()):
+            low, high = pair
+            span = max(high - low, 1e-9)
+            lower_near = low + (1.0 - self._SEARCH_BOUND_NEAR_RATIO) * span
+            upper_near = low + self._SEARCH_BOUND_NEAR_RATIO * span
+            near_lower = sum(1 for weights in normalized_bots if weights[key] <= lower_near)
+            near_upper = sum(1 for weights in normalized_bots if weights[key] >= upper_near)
+            required = self._SEARCH_BOUND_BOT_RATIO * len(normalized_bots)
+            next_low, next_high = low, high
+            if near_lower >= required:
+                next_low = round(low - self._SEARCH_BOUND_STEP, 6)
+            if near_upper >= required:
+                next_high = round(high + self._SEARCH_BOUND_STEP, 6)
+            if next_low != low or next_high != high:
+                bounds[key] = (next_low, next_high)
+                changed = True
+
+        if changed:
+            self._search_bounds_by_ruleset[ruleset_id] = dict(bounds)
+            if self._store is not None:
+                self._store.upsert_search_weight_bounds(ruleset_id, bounds)
+        return changed
+
+    def _apply_search_bounds_to_job_locked(self, job: TrainingJob, runtime: _TrainingRuntime) -> None:
+        bounds = self._search_bounds_locked(job.ruleset_id)
+        job.current_weights = self._clamp_weights_to_bounds(job.current_weights, bounds)
+        job.best_weights = self._clamp_weights_to_bounds(job.best_weights, bounds)
+        if runtime.simulator is not None:
+            runtime.simulator.set_weight_bounds(bounds)
+
+    def _refresh_search_bounds_locked(
+        self,
+        job: TrainingJob,
+        runtime: _TrainingRuntime,
+        *,
+        force: bool = False,
+    ) -> bool:
+        signature = self._league_members_signature_locked(job.ruleset_id)
+        if not force and signature == runtime.last_league_members_signature:
+            return False
+        runtime.last_league_members_signature = signature
+        changed = self._maybe_expand_search_bounds_from_league_locked(job.ruleset_id)
+        self._apply_search_bounds_to_job_locked(job, runtime)
+        if changed:
+            old_hash = job.progress.eval_protocol_hash
+            job.progress.eval_protocol_hash = self._compute_eval_protocol_hash(job)
+            self._event_bus.publish_sync(
+                event_type="training.search_bounds_expanded",
+                entity_id=job.id,
+                ruleset_id=job.ruleset_id,
+                payload={
+                    "old_eval_protocol_hash": old_hash,
+                    "new_eval_protocol_hash": job.progress.eval_protocol_hash,
+                    "search_weight_bounds": {
+                        key: [pair[0], pair[1]]
+                        for key, pair in sorted(self._search_bounds_locked(job.ruleset_id).items())
+                    },
+                },
+            )
+        return changed
+
     def create_job(
         self,
         ruleset_id: str,
@@ -345,7 +579,8 @@ class TrainingJobService:
         get_ruleset(ruleset_id)
         resolved_params = params or TrainingParams()
         resolved_seed = seed if seed is not None else random.SystemRandom().randint(1, 2_147_483_647)
-        normalized_seed_weights = normalize_weights(seed_weights)
+        bounds = self._search_bounds_locked(ruleset_id)
+        normalized_seed_weights = self._clamp_weights_to_bounds(seed_weights or {}, bounds)
         job = TrainingJob(
             id=str(uuid4()),
             ruleset_id=ruleset_id,
@@ -374,7 +609,15 @@ class TrainingJobService:
                     seed_weights=normalized_seed_weights,
                     seed_best_weights=normalized_seed_weights,
                     seed_best_score=0.0,
+                    weight_bounds=bounds,
                 )
+            )
+            self._record_promotion_candidate_locked(
+                job,
+                self._runtimes[job.id],
+                weights=normalized_seed_weights,
+                score=0.0,
+                window=0,
             )
             self._persist_job_locked(job)
         return job
@@ -424,6 +667,7 @@ class TrainingJobService:
                     self._set_stage_locked(job, "Warmup", reason="job_started", publish_async=False)
                 self._ensure_league_bootstrap_locked(job)
                 self._ensure_frozen_suites_bootstrap_locked(job)
+                self._refresh_search_bounds_locked(job, runtime, force=True)
                 self._set_state_locked(job, "Running", publish_async=False)
                 runtime.pause_requested = False
                 runtime.stop_requested = False
@@ -654,7 +898,9 @@ class TrainingJobService:
         needs_window_eval = (job.progress.batches_done % job.params.eval_window_batches) == 0
 
         if needs_window_eval:
+            self._refresh_search_bounds_locked(job, runtime)
             if runtime.simulator is None:
+                bounds = self._search_bounds_locked(job.ruleset_id)
                 runtime.simulator = SelfPlaySimulator(
                     ruleset_id=job.ruleset_id,
                     seed=job.seed + job.progress.windows_done,
@@ -665,6 +911,7 @@ class TrainingJobService:
                     seed_weights=job.current_weights,
                     seed_best_weights=job.best_weights,
                     seed_best_score=job.progress.best_score,
+                    weight_bounds=bounds,
                 )
             if runtime.simulator.population_size != job.progress.current_population_size:
                 runtime.simulator.set_population_size(job.progress.current_population_size)
@@ -876,6 +1123,13 @@ class TrainingJobService:
 
             job.current_weights = runtime.simulator.current_weights
             job.best_weights = runtime.simulator.best_weights
+            self._record_promotion_candidate_locked(
+                job,
+                runtime,
+                weights=job.current_weights,
+                score=metrics.score,
+                window=job.progress.windows_done,
+            )
 
             self._apply_stage_transitions_locked(job)
             plateau_triggered = False
@@ -884,12 +1138,14 @@ class TrainingJobService:
                 and job.progress.plateau_windows >= max(1, int(job.params.plateau_patience_windows))
             )
             if plateau_ready:
+                promotion_weights = self._select_promotion_candidate_locked(job, runtime)
                 promoted_to_top16 = self._maybe_auto_promote_weights_locked(
-                    job, runtime, dict(job.best_weights), force=True
+                    job, runtime, promotion_weights, force=True
                 )
                 promotion_tested = promoted_to_top16.attempted
                 promotion_passed = promoted_to_top16.passed
                 promotion_rank = promoted_to_top16.rank
+                self._refresh_search_bounds_locked(job, runtime)
                 job.progress.last_promotion_tested = promoted_to_top16.attempted
                 job.progress.last_promotion_passed = promoted_to_top16.passed
                 job.progress.last_promotion_rank = promoted_to_top16.rank
@@ -1355,6 +1611,8 @@ class TrainingJobService:
         runtime.last_auto_promote_window = job.progress.windows_done
         if not weights:
             return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
+        normalized_weights = normalize_weights(weights)
+        fingerprint = self._weights_fingerprint(normalized_weights)
 
         protocol_hash_before = job.progress.eval_protocol_hash
         if not protocol_hash_before:
@@ -1362,21 +1620,37 @@ class TrainingJobService:
             protocol_hash_before = job.progress.eval_protocol_hash
 
         before_signature = self._top16_signature_locked(job.ruleset_id)
-        # Non-blocking promotion: all plateau candidates enter league ecosystem.
-        bot_version_id = f"{job.id[:8]}-w{job.progress.windows_done}"
-        try:
-            bot = self._bot_catalog.create_from_checkpoint(
-                bot_version_id=bot_version_id,
-                ruleset_id=job.ruleset_id,
-                checkpoint=None,
-                weights=weights,
-                policy_type="probability_strong",
-                feature_schema_version="classic_features_v1",
-                lookahead_policy_version="adaptive_v1",
-                tags={"active", f"eval_protocol:{protocol_hash_before}"},
-            )
-        except ValueError:
-            return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
+        existing_bot_id = self._find_existing_bot_id_by_fingerprint_locked(
+            ruleset_id=job.ruleset_id,
+            fingerprint=fingerprint,
+        )
+        deduplicated = existing_bot_id is not None
+        if existing_bot_id is not None:
+            bot = self._bot_catalog.get_bot(existing_bot_id)
+            self._bot_catalog.mark_eval_protocol(existing_bot_id, protocol_hash_before)
+        else:
+            bot_version_id = f"{job.id[:8]}-{fingerprint}"
+            try:
+                bot = self._bot_catalog.create_from_checkpoint(
+                    bot_version_id=bot_version_id,
+                    ruleset_id=job.ruleset_id,
+                    checkpoint=None,
+                    weights=normalized_weights,
+                    policy_type="probability_strong",
+                    feature_schema_version="classic_features_v1",
+                    lookahead_policy_version="adaptive_v1",
+                    tags={"active", f"eval_protocol:{protocol_hash_before}", f"wf:{fingerprint}"},
+                )
+            except ValueError:
+                fallback_existing = self._find_existing_bot_id_by_fingerprint_locked(
+                    ruleset_id=job.ruleset_id,
+                    fingerprint=fingerprint,
+                )
+                if fallback_existing is None:
+                    return _PromotionAttemptResult(attempted=False, passed=False, rank=-1)
+                bot = self._bot_catalog.get_bot(fallback_existing)
+                self._bot_catalog.mark_eval_protocol(fallback_existing, protocol_hash_before)
+                deduplicated = True
 
         runtime.last_auto_promote_window = job.progress.windows_done
         self._league_service.register_bot(job.ruleset_id, bot.bot_version_id, "active")
@@ -1388,6 +1662,8 @@ class TrainingJobService:
                 "checkpoint_id": None,
                 "bot_version_id": bot.bot_version_id,
                 "bypassed": True,
+                "deduplicated": deduplicated,
+                "weights_fingerprint": fingerprint,
                 "eval_protocol_hash": protocol_hash_before,
                 "cycle_index": job.progress.cycle_index,
             },
@@ -1607,6 +1883,10 @@ class TrainingJobService:
         )
 
     def _compute_eval_protocol_hash(self, job: TrainingJob) -> str:
+        search_bounds = {
+            key: [pair[0], pair[1]]
+            for key, pair in sorted(self._search_bounds_locked(job.ruleset_id).items())
+        }
         payload = {
             "ruleset_id": job.ruleset_id,
             "lookahead_policy_version": "adaptive_v1",
@@ -1638,7 +1918,7 @@ class TrainingJobService:
             "search_cma_sigma_max": 0.45,
             "search_cma_diag_min": 0.05,
             "search_cma_diag_max": 4.0,
-            "search_weight_bounds": {"default": [0.0, 3.0]},
+            "search_weight_bounds": search_bounds,
             "search_restart_semantics": "plateau_anchor_reseed_v1",
             "search_restart_sigma": 0.12,
             "search_restart_max_count": 3,

@@ -445,7 +445,7 @@ class SelfPlaySimulator:
     _ELITE_FRACTION = 0.25
     _SEARCH_POLICY = "sep_cma_es_lite_v1"
     _WEIGHT_OTHER_MIN = 0.0
-    _WEIGHT_OTHER_MAX = 3.0
+    _WEIGHT_OTHER_MAX = 2.0
     _CMA_TINY = 1e-12
     _CMA_SIGMA_INIT = 0.20
     _CMA_SIGMA_MIN = 0.02
@@ -473,6 +473,7 @@ class SelfPlaySimulator:
         seed_best_weights: dict[str, float] | None = None,
         seed_best_score: float = 0.0,
         search_state: dict | None = None,
+        weight_bounds: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         self._ruleset = get_ruleset(ruleset_id)
         self._ruleset_id = ruleset_id
@@ -485,6 +486,7 @@ class SelfPlaySimulator:
 
         base = normalize_weights(seed_weights)
         self._param_names = tuple(base.keys())
+        self._weight_bounds_by_param = self._normalize_weight_bounds(weight_bounds)
         self._incumbent_weights = dict(base)
         self._incumbent_score = 0.0
         self._best_weights = (
@@ -516,6 +518,7 @@ class SelfPlaySimulator:
 
         if search_state is not None:
             self.restore_search_state(search_state)
+        self._apply_bounds_inplace()
 
     def close(self) -> None:
         if self._executor is not None:
@@ -539,6 +542,10 @@ class SelfPlaySimulator:
 
     def set_population_size(self, population_size: int) -> None:
         self._population_size = max(1, int(population_size))
+
+    def set_weight_bounds(self, weight_bounds: dict[str, tuple[float, float]]) -> None:
+        self._weight_bounds_by_param = self._normalize_weight_bounds(weight_bounds)
+        self._apply_bounds_inplace()
 
     def maybe_restart(
         self,
@@ -1066,15 +1073,50 @@ class SelfPlaySimulator:
     def _clamp(value: float, low: float, high: float) -> float:
         return max(low, min(high, value))
 
-    @classmethod
-    def _weight_bounds(cls, key: str) -> tuple[float, float]:
-        del key
-        return cls._WEIGHT_OTHER_MIN, cls._WEIGHT_OTHER_MAX
+    def _weight_bounds(self, key: str) -> tuple[float, float]:
+        return self._weight_bounds_by_param.get(key, (self._WEIGHT_OTHER_MIN, self._WEIGHT_OTHER_MAX))
 
-    @classmethod
-    def _clamp_weight(cls, key: str, value: float) -> float:
-        low, high = cls._weight_bounds(key)
-        return cls._clamp(value, low, high)
+    def _clamp_weight(self, key: str, value: float) -> float:
+        low, high = self._weight_bounds(key)
+        return self._clamp(value, low, high)
+
+    def _normalize_weight_bounds(
+        self,
+        weight_bounds: dict[str, tuple[float, float]] | None,
+    ) -> dict[str, tuple[float, float]]:
+        normalized: dict[str, tuple[float, float]] = {}
+        for key in self._param_names:
+            raw = weight_bounds.get(key) if weight_bounds is not None else None
+            if raw is None:
+                low = self._WEIGHT_OTHER_MIN
+                high = self._WEIGHT_OTHER_MAX
+            else:
+                low = float(raw[0])
+                high = float(raw[1])
+            if high < low:
+                low, high = high, low
+            normalized[key] = (low, high)
+        return normalized
+
+    def _apply_bounds_inplace(self) -> None:
+        self._incumbent_weights = {
+            key: self._clamp_weight(key, value)
+            for key, value in self._incumbent_weights.items()
+        }
+        self._best_weights = {
+            key: self._clamp_weight(key, value)
+            for key, value in self._best_weights.items()
+        }
+        self._cma_mean = {
+            key: self._clamp_weight(key, value)
+            for key, value in self._cma_mean.items()
+        }
+        for idx, anchor in enumerate(self._anchor_archive):
+            clamped_weights = {
+                key: self._clamp_weight(key, value)
+                for key, value in anchor.weights.items()
+            }
+            self._anchor_archive[idx] = replace(anchor, weights=clamped_weights)
 
     def _parent_mu_count(self) -> int:
         lambda_count = max(0, self._population_size - 1)
