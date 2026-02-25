@@ -60,7 +60,7 @@ def test_self_play_simulator_is_deterministic() -> None:
     assert s1.best_weights == s2.best_weights
 
 
-def test_self_play_simulator_evaluates_top_quarter_candidates(monkeypatch) -> None:
+def test_self_play_simulator_evaluates_only_top_ranked_challenger(monkeypatch) -> None:
     simulator = SelfPlaySimulator(
         ruleset_id="classic_v1",
         seed=77,
@@ -94,8 +94,9 @@ def test_self_play_simulator_evaluates_top_quarter_candidates(monkeypatch) -> No
 
     simulator.next_window(0, eval_protocol_hash="test-protocol")
 
-    assert len(eval_indices) == 9
-    assert sorted(set(eval_indices)) == [0, *range(24, 32)]
+    assert len(eval_indices) == 2
+    assert eval_indices[0] == 0
+    assert eval_indices[1] == 31
 
 
 def test_self_play_simulator_eval_is_strict_paired(monkeypatch) -> None:

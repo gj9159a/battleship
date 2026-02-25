@@ -818,17 +818,6 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Доля train
-              <input
-                aria-label="Доля train"
-                value={params.train_split}
-                onChange={(event) =>
-                  setParams((prev) => ({ ...prev, train_split: toNumber(event.target.value, prev.train_split) }))
-                }
-              />
-            </label>
-
-            <label>
               Число worker
               <input
                 aria-label="Число worker"
@@ -850,17 +839,6 @@ export function TrainingPage() {
                     ...prev,
                     autoevolve_enabled: event.target.checked,
                   }))
-                }
-              />
-            </label>
-
-            <label>
-              Целевой score
-              <input
-                aria-label="Целевой score"
-                value={params.target_score}
-                onChange={(event) =>
-                  setParams((prev) => ({ ...prev, target_score: toNumber(event.target.value, prev.target_score) }))
                 }
               />
             </label>

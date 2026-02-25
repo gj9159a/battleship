@@ -585,9 +585,9 @@ class SelfPlaySimulator:
         for _ in range(self._population_size - 1):
             candidates.append(self._sample_challenger())
 
-        train_games = int(round(self._window_games * self._train_split))
-        train_games = max(2, min(self._window_games - 2, train_games))
-        eval_games = max(2, self._window_games - train_games)
+        # Monopoly-like split: full search phase + separate full benchmark phase.
+        train_games = max(2, self._window_games)
+        eval_games = max(2, self._window_games)
 
         train_baseline = max(1, train_games // 2)
         train_active = max(1, train_games - train_baseline)
@@ -615,6 +615,8 @@ class SelfPlaySimulator:
         self._update_cma_from_ranked_candidates(candidates=candidates, ranked_indices=ranked)
         elite_indices = ranked[:elite_count]
         challenger_indices = [idx for idx in elite_indices if idx != 0]
+        if challenger_indices:
+            challenger_indices = [challenger_indices[0]]
         elite_fallback_used = False
         if not challenger_indices and len(candidates) > 1:
             for idx in ranked:

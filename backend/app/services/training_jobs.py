@@ -1264,11 +1264,12 @@ class TrainingJobService:
         payload = {
             "ruleset_id": job.ruleset_id,
             "lookahead_policy_version": "adaptive_v1",
-            "train_split": job.params.train_split,
             "microbatch_size": job.params.microbatch_size,
             "eval_window_batches": job.params.eval_window_batches,
             "population_size": job.progress.current_population_size,
             "worker_count": job.params.worker_count,
+            "phase_split_policy": "full_train_plus_full_benchmark_v1",
+            "elite_eval_policy": "top1_train_ranked_challenger_v1",
             "paired_eval": True,
             "mirrored_first_player": True,
             "eval_seed_scheme": "window_candidate_phase_v2",
@@ -1375,12 +1376,7 @@ class TrainingJobService:
         if stage != "PlateauCheck" and job.progress.plateau_windows >= job.params.plateau_patience_windows:
             self._set_stage_locked(job, "PlateauCheck", reason="plateau_detected")
 
-    def _should_finish_locked(self, job: TrainingJob) -> bool:
-        strong_target = max(job.params.target_score, 0.78)
-        if job.progress.last_score >= strong_target and job.progress.plateau_windows >= 3:
-            job.stop_reason = "strong_found_plateau"
-            return True
-
+    def _should_finish_locked(self, _job: TrainingJob) -> bool:
         return False
 
     def _ensure_state(self, job: TrainingJob, allowed: set[str], command: str) -> None:
