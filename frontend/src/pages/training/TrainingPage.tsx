@@ -527,7 +527,10 @@ export function TrainingPage() {
         plateau: job.progress.plateau_windows,
         cycle: job.progress.cycle_index,
         populationSize: readNumber(job.progress.current_population_size, job.params.population_size),
-        windowEvaluated: Boolean(job.progress.windows_done > 0 && job.progress.batches_done % job.params.eval_window_batches === 0),
+        windowEvaluated: Boolean(
+          job.progress.windows_done > 0 &&
+            job.progress.batches_done === job.progress.windows_done * Math.max(1, job.params.eval_window_batches),
+        ),
         avgShotsToSinkAll: readNumber(job.progress.last_avg_shots_to_sink_all),
         p95ShotsToSinkAll: readNumber(job.progress.last_p95_shots_to_sink_all),
         avgShotsToFirstHit: readNumber(job.progress.last_avg_shots_to_first_hit),
@@ -579,7 +582,30 @@ export function TrainingPage() {
   const canResume = job?.lifecycle_state === 'Paused';
   const canStop = job ? ['Running', 'Pausing', 'Paused'].includes(job.lifecycle_state) : false;
 
-  const windowMetrics = useMemo(() => metrics.filter((point) => point.windowEvaluated), [metrics]);
+  const windowMetrics = useMemo(() => {
+    const evalWindowBatches = Math.max(1, readNumber(job?.params.eval_window_batches, 1));
+    const byWindow = new Map<number, MetricPoint>();
+    for (const point of metrics) {
+      if (!point.windowEvaluated || point.window <= 0) {
+        continue;
+      }
+      const existing = byWindow.get(point.window);
+      if (!existing) {
+        byWindow.set(point.window, point);
+        continue;
+      }
+      const pointIsExact = point.batch === point.window * evalWindowBatches;
+      const existingIsExact = existing.batch === existing.window * evalWindowBatches;
+      if (pointIsExact && !existingIsExact) {
+        byWindow.set(point.window, point);
+        continue;
+      }
+      if (pointIsExact === existingIsExact && point.batch > existing.batch) {
+        byWindow.set(point.window, point);
+      }
+    }
+    return Array.from(byWindow.values()).sort((left, right) => right.batch - left.batch);
+  }, [job?.params.eval_window_batches, metrics]);
   const latestMetrics = useMemo(() => windowMetrics.slice(0, 10), [windowMetrics]);
   const chartPoints = useMemo(() => windowMetrics.slice(0, 80).reverse(), [windowMetrics]);
   const latestPoint = latestMetrics[0] ?? null;
