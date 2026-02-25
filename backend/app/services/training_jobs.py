@@ -467,6 +467,8 @@ class TrainingJobService:
         if self._bot_catalog is None:
             return None
         for bot in self._bot_catalog.list_bots(ruleset_id=ruleset_id, policy_type="probability_strong"):
+            if "baseline" in bot.tags:
+                continue
             if self._weights_fingerprint(bot.weights) == fingerprint:
                 return bot.bot_version_id
         return None
@@ -1554,17 +1556,29 @@ class TrainingJobService:
         self._league_service.register_bot(job.ruleset_id, baseline_random.bot_version_id, "baseline")
         self._league_service.register_bot(job.ruleset_id, baseline_strong.bot_version_id, "baseline")
 
-        seed_bot_id = f"{job.id[:8]}-seed"
-        seed_bot = self._bot_catalog.ensure_bot(
-            bot_version_id=seed_bot_id,
+        seed_fingerprint = self._weights_fingerprint(job.current_weights)
+        existing_seed_id = self._find_existing_bot_id_by_fingerprint_locked(
             ruleset_id=job.ruleset_id,
-            policy_type="probability_strong",
-            feature_schema_version="classic_features_v1",
-            lookahead_policy_version="adaptive_v1",
-            weights=job.current_weights,
-            tags={"active"},
+            fingerprint=seed_fingerprint,
         )
-        self._league_service.register_bot(job.ruleset_id, seed_bot.bot_version_id, "active")
+        if existing_seed_id is not None:
+            existing_bot = self._bot_catalog.get_bot(existing_seed_id)
+            if "baseline" in existing_bot.tags:
+                existing_seed_id = None
+        if existing_seed_id is not None:
+            self._league_service.register_bot(job.ruleset_id, existing_seed_id, "active")
+        else:
+            seed_bot_id = f"{job.id[:8]}-seed"
+            seed_bot = self._bot_catalog.ensure_bot(
+                bot_version_id=seed_bot_id,
+                ruleset_id=job.ruleset_id,
+                policy_type="probability_strong",
+                feature_schema_version="classic_features_v1",
+                lookahead_policy_version="adaptive_v1",
+                weights=job.current_weights,
+                tags={"active", f"wf:{seed_fingerprint}"},
+            )
+            self._league_service.register_bot(job.ruleset_id, seed_bot.bot_version_id, "active")
 
     def _ensure_frozen_suites_bootstrap_locked(self, job: TrainingJob) -> None:
         if self._frozen_benchmarks is None:
