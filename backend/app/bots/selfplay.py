@@ -444,8 +444,10 @@ def _wilson_lower_bound(*, wins: int, total: int, z: float = 1.96) -> float:
 class SelfPlaySimulator:
     _ELITE_FRACTION = 0.25
     _SEARCH_POLICY = "sep_cma_es_lite_v1"
-    _WEIGHT_MIN = 0.01
-    _WEIGHT_MAX = 2.5
+    _WEIGHT_MISS_MIN = -3.0
+    _WEIGHT_MISS_MAX = 0.0
+    _WEIGHT_OTHER_MIN = 0.0
+    _WEIGHT_OTHER_MAX = 3.0
     _CMA_TINY = 1e-12
     _CMA_SIGMA_INIT = 0.20
     _CMA_SIGMA_MIN = 0.02
@@ -949,7 +951,7 @@ class SelfPlaySimulator:
             if key not in cma_mean or key not in cma_diag or key not in cma_p_sigma:
                 raise ValueError(f"search_state missing parameter '{key}'")
 
-        self._cma_mean = {key: float(cma_mean[key]) for key in self._param_names}
+        self._cma_mean = {key: self._clamp_weight(key, float(cma_mean[key])) for key in self._param_names}
         self._cma_sigma = self._clamp(float(snapshot["cma_sigma"]), self._CMA_SIGMA_MIN, self._CMA_SIGMA_MAX)
         self._cma_diag = {
             key: self._clamp(float(cma_diag[key]), self._CMA_DIAG_MIN, self._CMA_DIAG_MAX) for key in self._param_names
@@ -990,7 +992,7 @@ class SelfPlaySimulator:
             z = self._rng.gauss(0.0, 1.0)
             step = self._cma_sigma * math.sqrt(max(self._cma_diag[key], self._CMA_TINY)) * z
             raw = self._cma_mean[key] + step
-            sampled[key] = round(self._clamp(raw, self._WEIGHT_MIN, self._WEIGHT_MAX), 6)
+            sampled[key] = round(self._clamp_weight(key, raw), 6)
         return sampled
 
     def _update_cma_from_ranked_candidates(
@@ -1033,7 +1035,7 @@ class SelfPlaySimulator:
 
         for key in self._param_names:
             step = old_sigma * math.sqrt(max(old_diag[key], self._CMA_TINY)) * y_w[key]
-            self._cma_mean[key] = self._clamp(old_mean[key] + step, self._WEIGHT_MIN, self._WEIGHT_MAX)
+            self._cma_mean[key] = self._clamp_weight(key, old_mean[key] + step)
 
         c_sigma = self._CMA_C_SIGMA
         coef = math.sqrt(c_sigma * (2.0 - c_sigma) * mueff)
@@ -1065,6 +1067,17 @@ class SelfPlaySimulator:
     @staticmethod
     def _clamp(value: float, low: float, high: float) -> float:
         return max(low, min(high, value))
+
+    @classmethod
+    def _weight_bounds(cls, key: str) -> tuple[float, float]:
+        if key == "lookahead_miss":
+            return cls._WEIGHT_MISS_MIN, cls._WEIGHT_MISS_MAX
+        return cls._WEIGHT_OTHER_MIN, cls._WEIGHT_OTHER_MAX
+
+    @classmethod
+    def _clamp_weight(cls, key: str, value: float) -> float:
+        low, high = cls._weight_bounds(key)
+        return cls._clamp(value, low, high)
 
     def _parent_mu_count(self) -> int:
         lambda_count = max(0, self._population_size - 1)

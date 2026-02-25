@@ -114,10 +114,10 @@ class GameSessionResponse(BaseModel):
 
 
 class TrainingParamsDTO(BaseModel):
-    games_per_candidate: int = Field(default=100, gt=0)
-    epoch_iters: int = Field(default=2, gt=0)
-    microbatch_size: int = Field(default=100, gt=0)
-    eval_window_batches: int = Field(default=2, gt=0)
+    games_per_candidate: int = Field(default=128, gt=0)
+    epoch_iters: int = Field(default=5, gt=0)
+    microbatch_size: int = Field(default=128, gt=0)
+    eval_window_batches: int = Field(default=5, gt=0)
     checkpoint_interval_batches: int = Field(default=50, gt=0)
     population_size: int = Field(default=32, gt=0)
     train_split: float = Field(default=0.7, ge=0.5, le=0.9)
@@ -126,9 +126,9 @@ class TrainingParamsDTO(BaseModel):
     quality_gate_min_winrate: float = Field(default=0.57, ge=0.0, le=1.0)
     quality_gate_min_lower_bound: float = Field(default=0.53, ge=0.0, le=1.0)
     target_score: float = Field(default=0.8, ge=0.0, le=1.0)
-    improvement_delta: float = Field(default=0.008, ge=0.0, le=1.0)
-    plateau_delta: float = Field(default=0.0015, ge=0.0, le=1.0)
-    plateau_patience_windows: int = Field(default=8, gt=0)
+    improvement_delta: float = Field(default=0.01, ge=0.0, le=1.0)
+    plateau_delta: float = Field(default=0.01, ge=0.0, le=1.0)
+    plateau_patience_windows: int = Field(default=1, gt=0)
     early_stop_plateau_windows: int = Field(default=30, gt=0)
     min_windows_before_early_stop: int = Field(default=120, gt=0)
     tick_delay_ms: int = Field(default=0, ge=0)

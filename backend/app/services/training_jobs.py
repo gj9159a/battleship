@@ -2,6 +2,8 @@ import threading
 import time
 import json
 import hashlib
+import concurrent.futures
+import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
@@ -24,6 +26,29 @@ from app.trainer.simulation import (
     ROBUST_EPSILON,
     SELECTION_POLICY_VERSION,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _StrongMatchTask:
+    ruleset_id: str
+    candidate_weights: dict[str, float]
+    opponent_weights: dict[str, float]
+    seed: int
+    first_player: int
+
+
+def _run_strong_match_task(task: _StrongMatchTask) -> int:
+    ruleset = get_ruleset(task.ruleset_id)
+    rng = random.Random(task.seed)
+    result = play_strong_vs(
+        ruleset,
+        rng,
+        strong_weights=task.candidate_weights,
+        opponent_kind="strong",
+        opponent_weights=task.opponent_weights,
+        first_player=task.first_player,
+    )
+    return int(result.winner)
 
 
 @dataclass(slots=True)
@@ -157,8 +182,8 @@ class TrainingJobService:
                     state = "Paused"
 
                 params_payload = dict(row["params"])
-                params_payload.setdefault("games_per_candidate", params_payload.get("microbatch_size", 100))
-                params_payload.setdefault("epoch_iters", params_payload.get("eval_window_batches", 2))
+                params_payload.setdefault("games_per_candidate", params_payload.get("microbatch_size", 128))
+                params_payload.setdefault("epoch_iters", params_payload.get("eval_window_batches", 5))
                 job = TrainingJob(
                     id=row["id"],
                     ruleset_id=row["ruleset_id"],
@@ -306,7 +331,7 @@ class TrainingJobService:
     ) -> TrainingJob:
         get_ruleset(ruleset_id)
         resolved_params = params or TrainingParams()
-        resolved_seed = seed if seed is not None else 0
+        resolved_seed = seed if seed is not None else random.SystemRandom().randint(1, 2_147_483_647)
         normalized_seed_weights = normalize_weights(seed_weights)
         job = TrainingJob(
             id=str(uuid4()),
@@ -1245,6 +1270,36 @@ class TrainingJobService:
         top16 = [row.bot_version_id for row in table if row.pool_type == "league"][:16]
         return bot_version_id in top16
 
+    def _run_strong_matches(self, tasks: list[_StrongMatchTask], *, worker_count: int) -> list[int]:
+        if not tasks:
+            return []
+        max_workers = max(1, min(worker_count, len(tasks)))
+        if max_workers == 1:
+            return [_run_strong_match_task(task) for task in tasks]
+
+        ctx = mp.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+            return list(executor.map(_run_strong_match_task, tasks))
+
+    def _record_match_results_locked(
+        self,
+        *,
+        ruleset_id: str,
+        bot_a_ids: list[str],
+        bot_b_ids: list[str],
+        winners: list[int],
+    ) -> None:
+        if self._league_service is None:
+            return
+        for winner, bot_a_id, bot_b_id in zip(winners, bot_a_ids, bot_b_ids):
+            winner_id = bot_a_id if winner == 0 else bot_b_id
+            self._league_service.record_match(
+                ruleset_id=ruleset_id,
+                bot_a_id=bot_a_id,
+                bot_b_id=bot_b_id,
+                winner_id=winner_id,
+            )
+
     def _run_promotion_matches_locked(self, job: TrainingJob, candidate_id: str, candidate_weights: dict[str, float]) -> None:
         if self._bot_catalog is None or self._league_service is None:
             return
@@ -1260,10 +1315,9 @@ class TrainingJobService:
         if not opponents:
             return
 
-        try:
-            ruleset = get_ruleset(job.ruleset_id)
-        except KeyError:
-            return
+        tasks: list[_StrongMatchTask] = []
+        bot_a_ids: list[str] = []
+        bot_b_ids: list[str] = []
         for idx, opponent_id in enumerate(opponents):
             try:
                 opponent = self._bot_catalog.get_bot(opponent_id)
@@ -1271,22 +1325,33 @@ class TrainingJobService:
                 continue
 
             for mirror in range(self._PROMOTION_MATCHES_PER_OPPONENT):
-                rng = random.Random(job.seed * 1000 + job.progress.windows_done * 37 + idx * 13 + mirror)
-                result = play_strong_vs(
-                    ruleset,
-                    rng,
-                    strong_weights=candidate_weights,
-                    opponent_kind="strong",
-                    opponent_weights=opponent.weights,
-                    first_player=(idx + mirror) % 2,
+                tasks.append(
+                    _StrongMatchTask(
+                        ruleset_id=job.ruleset_id,
+                        candidate_weights=candidate_weights,
+                        opponent_weights=opponent.weights,
+                        seed=job.seed * 1000 + job.progress.windows_done * 37 + idx * 13 + mirror,
+                        first_player=(idx + mirror) % 2,
+                    )
                 )
-                winner_id = candidate_id if result.winner == 0 else opponent_id
-                self._league_service.record_match(
-                    ruleset_id=job.ruleset_id,
-                    bot_a_id=candidate_id,
-                    bot_b_id=opponent_id,
-                    winner_id=winner_id,
-                )
+                bot_a_ids.append(candidate_id)
+                bot_b_ids.append(opponent_id)
+
+        if not tasks:
+            return
+
+        self._lock.release()
+        try:
+            winners = self._run_strong_matches(tasks, worker_count=job.params.worker_count)
+        finally:
+            self._lock.acquire()
+
+        self._record_match_results_locked(
+            ruleset_id=job.ruleset_id,
+            bot_a_ids=bot_a_ids,
+            bot_b_ids=bot_b_ids,
+            winners=winners,
+        )
 
     def _maybe_rebench_league_mismatch_locked(self, job: TrainingJob) -> None:
         if self._bot_catalog is None or self._league_service is None:
@@ -1319,12 +1384,10 @@ class TrainingJobService:
         if not mismatched:
             return
 
-        try:
-            ruleset = get_ruleset(job.ruleset_id)
-        except KeyError:
-            return
-
         boundary_id = top16[-1]
+        tasks: list[_StrongMatchTask] = []
+        bot_a_ids: list[str] = []
+        bot_b_ids: list[str] = []
         for idx, bot_id in enumerate(mismatched):
             try:
                 bot = self._bot_catalog.get_bot(bot_id)
@@ -1338,25 +1401,31 @@ class TrainingJobService:
                 except KeyError:
                     continue
                 for mirror in range(self._PROMOTION_MATCHES_PER_OPPONENT):
-                    rng = random.Random(
-                        job.seed * 1000 + job.progress.windows_done * 97 + idx * 31 + opp_index * 7 + mirror
+                    tasks.append(
+                        _StrongMatchTask(
+                            ruleset_id=job.ruleset_id,
+                            candidate_weights=bot.weights,
+                            opponent_weights=opponent.weights,
+                            seed=job.seed * 1000 + job.progress.windows_done * 97 + idx * 31 + opp_index * 7 + mirror,
+                            first_player=mirror % 2,
+                        )
                     )
-                    result = play_strong_vs(
-                        ruleset,
-                        rng,
-                        strong_weights=bot.weights,
-                        opponent_kind="strong",
-                        opponent_weights=opponent.weights,
-                        first_player=mirror % 2,
-                    )
-                    winner_id = bot_id if result.winner == 0 else opponent_id
-                    self._league_service.record_match(
-                        ruleset_id=job.ruleset_id,
-                        bot_a_id=bot_id,
-                        bot_b_id=opponent_id,
-                        winner_id=winner_id,
-                    )
+                    bot_a_ids.append(bot_id)
+                    bot_b_ids.append(opponent_id)
             self._bot_catalog.mark_eval_protocol(bot_id, current_protocol)
+
+        if tasks:
+            self._lock.release()
+            try:
+                winners = self._run_strong_matches(tasks, worker_count=job.params.worker_count)
+            finally:
+                self._lock.acquire()
+            self._record_match_results_locked(
+                ruleset_id=job.ruleset_id,
+                bot_a_ids=bot_a_ids,
+                bot_b_ids=bot_b_ids,
+                winners=winners,
+            )
 
         self._event_bus.publish_sync(
             event_type="training.league_rebench",
@@ -1400,6 +1469,10 @@ class TrainingJobService:
             "search_cma_sigma_max": 0.45,
             "search_cma_diag_min": 0.05,
             "search_cma_diag_max": 4.0,
+            "search_weight_bounds": {
+                "lookahead_miss": [-3.0, 0.0],
+                "default": [0.0, 3.0],
+            },
             "search_restart_semantics": "plateau_anchor_reseed_v1",
             "search_restart_sigma": 0.12,
             "search_restart_max_count": 3,

@@ -23,10 +23,10 @@ StageState = Literal[
 
 @dataclass(slots=True)
 class TrainingParams:
-    games_per_candidate: int = 100
-    epoch_iters: int = 2
-    microbatch_size: int = 100
-    eval_window_batches: int = 2
+    games_per_candidate: int = 128
+    epoch_iters: int = 5
+    microbatch_size: int = 128
+    eval_window_batches: int = 5
     checkpoint_interval_batches: int = 50
     population_size: int = 32
     train_split: float = 0.7
@@ -35,9 +35,9 @@ class TrainingParams:
     quality_gate_min_winrate: float = 0.57
     quality_gate_min_lower_bound: float = 0.53
     target_score: float = 0.8
-    improvement_delta: float = 0.008
-    plateau_delta: float = 0.0015
-    plateau_patience_windows: int = 8
+    improvement_delta: float = 0.01
+    plateau_delta: float = 0.01
+    plateau_patience_windows: int = 1
     early_stop_plateau_windows: int = 30
     min_windows_before_early_stop: int = 120
     tick_delay_ms: int = 0
@@ -76,10 +76,10 @@ class TrainingParams:
             raise ValueError("meta_plateau_patience_cycles must be > 0")
         if self.strictness_max_level < 0:
             raise ValueError("strictness_max_level must be >= 0")
-        default_games = 100
-        default_epoch_iters = 2
-        default_microbatch = 100
-        default_eval_window = 2
+        default_games = 128
+        default_epoch_iters = 5
+        default_microbatch = 128
+        default_eval_window = 5
 
         if self.microbatch_size == default_microbatch and self.games_per_candidate != default_games:
             self.microbatch_size = int(self.games_per_candidate)

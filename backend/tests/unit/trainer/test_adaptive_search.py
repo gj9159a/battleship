@@ -2,6 +2,12 @@ from app.bots.policy import normalize_weights
 from app.bots.selfplay import SelfPlaySimulator
 
 
+def _clip_expected(key: str, value: float) -> float:
+    if key == "lookahead_miss":
+        return round(max(-3.0, min(0.0, value)), 6)
+    return round(max(0.0, min(3.0, value)), 6)
+
+
 def test_cma_sampling_uses_mean_sigma_and_diag() -> None:
     simulator = SelfPlaySimulator(
         ruleset_id="classic_v1",
@@ -17,7 +23,7 @@ def test_cma_sampling_uses_mean_sigma_and_diag() -> None:
     simulator._cma_sigma = 0.0
     simulator._cma_diag = {key: 1.0 for key in base}
     sample = simulator._sample_challenger()
-    assert sample == {key: round(max(0.01, min(2.5, value)), 6) for key, value in base.items()}
+    assert sample == {key: _clip_expected(key, value) for key, value in base.items()}
 
     simulator._cma_sigma = 0.25
     simulator._cma_diag = {key: 0.05 for key in base}
@@ -54,7 +60,7 @@ def test_cma_update_is_deterministic_for_fixed_candidates() -> None:
     candidates = [dict(base)]
     for delta in (0.15, 0.11, 0.07, -0.05, -0.09, 0.03, -0.02):
         candidate = {
-            key: max(0.01, min(2.5, value + (delta if key == "hunt_heat" else delta * 0.5)))
+            key: _clip_expected(key, value + (delta if key == "hunt_heat" else delta * 0.5))
             for key, value in base.items()
         }
         candidates.append(candidate)

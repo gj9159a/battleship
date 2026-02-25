@@ -22,10 +22,10 @@ const RULESETS_RETRY_DELAY_MS = 1000;
 const ACTIVE_JOB_STORAGE_KEY = 'training.active_job_id';
 const METRICS_STORAGE_KEY_PREFIX = 'training.metrics.';
 const DEFAULT_PARAMS: TrainingParamsDTO = {
-  games_per_candidate: 100,
-  epoch_iters: 2,
-  microbatch_size: 100,
-  eval_window_batches: 2,
+  games_per_candidate: 128,
+  epoch_iters: 5,
+  microbatch_size: 128,
+  eval_window_batches: 5,
   checkpoint_interval_batches: 50,
   population_size: 32,
   train_split: 0.7,
@@ -34,9 +34,9 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
   quality_gate_min_winrate: 0.57,
   quality_gate_min_lower_bound: 0.53,
   target_score: 0.8,
-  improvement_delta: 0.008,
-  plateau_delta: 0.0015,
-  plateau_patience_windows: 8,
+  improvement_delta: 0.01,
+  plateau_delta: 0.01,
+  plateau_patience_windows: 1,
   early_stop_plateau_windows: 30,
   min_windows_before_early_stop: 120,
   tick_delay_ms: 0,
@@ -189,7 +189,6 @@ function HeatmapTable({ title, matrix }: { title: string; matrix: number[][] }) 
 export function TrainingPage() {
   const [rulesets, setRulesets] = useState<RulesetDTO[]>([]);
   const [selectedRulesetId, setSelectedRulesetId] = useState('classic_v1');
-  const [seedInput, setSeedInput] = useState('42');
   const [seedBotVersionId, setSeedBotVersionId] = useState('');
   const [params, setParams] = useState<TrainingParamsDTO>(DEFAULT_PARAMS);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -679,7 +678,6 @@ export function TrainingPage() {
       const created = await createTrainingJob({
         ruleset_id: selectedRulesetId,
         seed_bot_version_id: seedBotVersionId.trim() || null,
-        seed: toNumber(seedInput, 42),
         params,
       });
       const started = await commandTrainingJob(created.id, 'start');
@@ -775,11 +773,6 @@ export function TrainingPage() {
             onChange={(event) => setSeedBotVersionId(event.target.value)}
             disabled={isBusy}
           />
-        </label>
-
-        <label>
-          Сид
-          <input aria-label="Сид" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} disabled={isBusy} />
         </label>
 
         <label>
@@ -908,16 +901,6 @@ export function TrainingPage() {
               />
             </label>
 
-            <label>
-              Задержка тика, мс
-              <input
-                aria-label="Задержка тика"
-                value={params.tick_delay_ms}
-                onChange={(event) =>
-                  setParams((prev) => ({ ...prev, tick_delay_ms: toNumber(event.target.value, prev.tick_delay_ms) }))
-                }
-              />
-            </label>
           </div>
         )}
 
