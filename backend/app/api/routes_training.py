@@ -57,6 +57,7 @@ def _to_response(job) -> TrainingJobResponse:
             last_score=job.progress.last_score,
             plateau_windows=job.progress.plateau_windows,
             cycle_index=job.progress.cycle_index,
+            current_population_size=job.progress.current_population_size,
             strictness_level=job.progress.strictness_level,
             meta_plateau_counter=job.progress.meta_plateau_counter,
             champion_gate_lcb=job.progress.champion_gate_lcb,

@@ -533,6 +533,13 @@ class SelfPlaySimulator:
     def current_weights(self) -> dict[str, float]:
         return dict(self._incumbent_weights)
 
+    @property
+    def population_size(self) -> int:
+        return self._population_size
+
+    def set_population_size(self, population_size: int) -> None:
+        self._population_size = max(1, int(population_size))
+
     def maybe_restart(
         self,
         *,
@@ -897,6 +904,7 @@ class SelfPlaySimulator:
         return {
             "search_policy": self._SEARCH_STATE_VERSION,
             "seed_base": int(self._seed),
+            "population_size": int(self._population_size),
             "cma_mean": {key: float(self._cma_mean[key]) for key in self._param_names},
             "cma_sigma": float(self._cma_sigma),
             "cma_diag": {key: float(self._cma_diag[key]) for key in self._param_names},
@@ -929,6 +937,7 @@ class SelfPlaySimulator:
         if str(snapshot.get("search_policy")) != self._SEARCH_STATE_VERSION:
             raise ValueError("search_state policy mismatch")
         self._seed = int(snapshot.get("seed_base", self._seed))
+        self._population_size = max(1, int(snapshot.get("population_size", self._population_size)))
 
         cma_mean = snapshot["cma_mean"]
         cma_diag = snapshot["cma_diag"]

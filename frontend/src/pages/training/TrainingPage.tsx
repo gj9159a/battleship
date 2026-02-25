@@ -43,7 +43,7 @@ const DEFAULT_PARAMS: TrainingParamsDTO = {
   tick_delay_ms: 0,
   autoevolve_enabled: true,
   meta_plateau_patience_cycles: 3,
-  strictness_max_level: 3,
+  strictness_max_level: 0,
 };
 const SEED_BOT_STORAGE_KEY = 'training.seed_bot_version_id';
 
@@ -57,7 +57,7 @@ type MetricPoint = {
   best: number;
   plateau: number;
   cycle: number;
-  strictness: number;
+  populationSize: number;
   windowEvaluated: boolean;
   avgShotsToSinkAll: number;
   p95ShotsToSinkAll: number;
@@ -423,7 +423,10 @@ export function TrainingPage() {
         const bestScore = readNumber(event.payload.best_score);
         const plateauWindows = readNumber(event.payload.plateau_windows);
         const cycleIndex = readNumber(event.payload.cycle_index);
-        const strictnessLevel = readNumber(event.payload.strictness_level);
+        const currentPopulationSize = readNumber(
+          event.payload.current_population_size,
+          readNumber(job.progress.current_population_size, job.params.population_size),
+        );
         const metaPlateauCounter = readNumber(event.payload.meta_plateau_counter);
         const championGateLcb = readNumber(event.payload.champion_gate_lcb);
         const evalProtocolHash = readString(event.payload.eval_protocol_hash);
@@ -460,7 +463,7 @@ export function TrainingPage() {
               best_score: bestScore,
               plateau_windows: plateauWindows,
               cycle_index: cycleIndex,
-              strictness_level: strictnessLevel,
+              current_population_size: currentPopulationSize,
               meta_plateau_counter: metaPlateauCounter,
               champion_gate_lcb: championGateLcb,
               eval_protocol_hash: evalProtocolHash,
@@ -492,7 +495,7 @@ export function TrainingPage() {
           best: bestScore,
           plateau: plateauWindows,
           cycle: cycleIndex,
-          strictness: strictnessLevel,
+          populationSize: currentPopulationSize,
           windowEvaluated: readBoolean(event.payload.window_evaluated),
           avgShotsToSinkAll,
           p95ShotsToSinkAll,
@@ -542,7 +545,7 @@ export function TrainingPage() {
         best: job.progress.best_score,
         plateau: job.progress.plateau_windows,
         cycle: job.progress.cycle_index,
-        strictness: job.progress.strictness_level,
+        populationSize: readNumber(job.progress.current_population_size, job.params.population_size),
         windowEvaluated: Boolean(job.progress.windows_done > 0 && job.progress.batches_done % job.params.eval_window_batches === 0),
         avgShotsToSinkAll: readNumber(job.progress.last_avg_shots_to_sink_all),
         p95ShotsToSinkAll: readNumber(job.progress.last_p95_shots_to_sink_all),
@@ -571,7 +574,7 @@ export function TrainingPage() {
     job?.progress.best_score,
     job?.progress.plateau_windows,
     job?.progress.cycle_index,
-    job?.progress.strictness_level,
+    job?.progress.current_population_size,
     job?.params.eval_window_batches,
     job?.progress.last_avg_shots_to_sink_all,
     job?.progress.last_p95_shots_to_sink_all,
@@ -922,34 +925,6 @@ export function TrainingPage() {
             </label>
 
             <label>
-              Терпение мета-плато (циклы)
-              <input
-                aria-label="Терпение мета-плато"
-                value={params.meta_plateau_patience_cycles}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    meta_plateau_patience_cycles: toNumber(event.target.value, prev.meta_plateau_patience_cycles),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Макс. уровень строгости
-              <input
-                aria-label="Макс. уровень строгости"
-                value={params.strictness_max_level}
-                onChange={(event) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    strictness_max_level: toNumber(event.target.value, prev.strictness_max_level),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
               Целевой score
               <input
                 aria-label="Целевой score"
@@ -1131,7 +1106,7 @@ export function TrainingPage() {
                   <th>Батч</th>
                   <th>Окно</th>
                   <th>Цикл</th>
-                  <th>Строгость</th>
+                  <th>Популяция</th>
                   <th>Счёт</th>
                   <th>Лучший</th>
                   <th>Плато</th>
@@ -1158,7 +1133,7 @@ export function TrainingPage() {
                     <td>{point.batch}</td>
                     <td>{point.window}</td>
                     <td>{point.cycle}</td>
-                    <td>{point.strictness}</td>
+                    <td>{point.populationSize}</td>
                     <td>{formatNumber(point.score, 4)}</td>
                     <td>{formatNumber(point.best, 4)}</td>
                     <td>{point.plateau}</td>
@@ -1193,8 +1168,8 @@ export function TrainingPage() {
           )}
           {job && (
             <div className="inline-summary">
-              Цикл: {job.progress.cycle_index} | Уровень строгости: {job.progress.strictness_level} | Метаплато:{' '}
-              {job.progress.meta_plateau_counter} | LCB чемпиона: {job.progress.champion_gate_lcb.toFixed(4)}
+              Цикл: {job.progress.cycle_index} | Популяция: {readNumber(job.progress.current_population_size, job.params.population_size)} |
+              Плато-срабатываний: {job.progress.meta_plateau_counter} | LCB чемпиона: {job.progress.champion_gate_lcb.toFixed(4)}
             </div>
           )}
           {job && (

@@ -83,6 +83,7 @@ class TrainingProgress:
     candidate_streak: int = 0
     stage_enter_window: int = 0
     cycle_index: int = 0
+    current_population_size: int = 0
     strictness_level: int = 0
     meta_plateau_counter: int = 0
     champion_gate_lcb: float = 0.0

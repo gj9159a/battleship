@@ -80,6 +80,7 @@ export type TrainingProgressDTO = {
   last_score: number;
   plateau_windows: number;
   cycle_index: number;
+  current_population_size: number;
   strictness_level: number;
   meta_plateau_counter: number;
   champion_gate_lcb: number;

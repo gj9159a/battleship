@@ -155,6 +155,7 @@ class TrainingProgressDTO(BaseModel):
     last_score: float
     plateau_windows: int
     cycle_index: int
+    current_population_size: int
     strictness_level: int
     meta_plateau_counter: int
     champion_gate_lcb: float
